@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// shortcog — fast read path for the shortcog COG profile.
+// shortcog - fast read path for the shortcog COG profile.
 
 #pragma once
 
@@ -59,14 +59,17 @@ enum class ParseError {
     invalid_dimensions,
     tile_larger_than_image,
     blob_size_mismatch,
+    tile_count_overflow,
+    tile_size_overflow,
     non_positive_tile_byte_count,
     non_monotonic_offsets,
 };
 
 [[nodiscard]] std::string_view describe(ParseError e) noexcept;
 
-// Validated blob: BlobHeader fields, derived grid quantities, and the
-// trailing tile_byte_counts array.
+// Validated blob. BlobHeader fields, derived grid quantities, the trailing
+// tile_byte_counts array, and the precomputed tile_offsets so tile_offset(i)
+// stays O(1) on the hot path.
 struct Header {
     std::uint32_t image_width{};
     std::uint32_t image_length{};
@@ -86,13 +89,19 @@ struct Header {
     GDALDataType  gdal_type{GDT_Unknown};
 
     std::vector<std::uint32_t> tile_byte_counts;  // length == tile_count
+    std::vector<std::uint64_t> tile_offsets;      // length == tile_count, prefix sums
 
-    [[nodiscard]] std::uint64_t tile_offset(std::uint32_t i) const noexcept;
+    [[nodiscard]] std::uint64_t tile_offset(std::uint32_t i) const noexcept {
+        return tile_offsets[i];
+    }
 
-    // Band-major: band * (tiles_across * tiles_down) + row * tiles_across + col.
+    // Physical file order, bands inner-most, matching the GDAL COG driver
+    // INTERLEAVE=TILE layout. See SPEC.md "Tile byte counts".
     [[nodiscard]] std::uint32_t tile_index(std::uint32_t row,
                                            std::uint32_t col,
-                                           std::uint32_t band) const noexcept;
+                                           std::uint32_t band) const noexcept {
+        return (row * tiles_across + col) * samples_per_pixel + band;
+    }
 };
 
 // Blob = HEADER_SIZE bytes followed by tile_count little-endian uint32 byte
@@ -116,7 +125,7 @@ public:
     TileReader(TileReader&&)                 = delete;
     TileReader& operator=(TileReader&&)      = delete;
 
-    // Preconditions:
+    // Preconditions.
     //   out.size() == header.max_tile_size.
     //   compressed_scratch is caller-owned, reused across calls on the same
     //   thread, and grows as needed.
@@ -226,5 +235,5 @@ void register_driver();
 
 extern "C" {
     // GDAL plugin discovery entry point.
-    void CPL_DLL GDALRegister_shortcog();
+    void CPL_DLL GDALRegister_SHORTCOG();
 }

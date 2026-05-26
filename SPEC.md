@@ -31,9 +31,9 @@ A COG is shortcog compliant only when all of the following are true.
 - `tile_width <= image_width` and `tile_length <= image_length`
 - `TileOffsets` and `TileByteCounts` are present
 - `TileOffsets` and `TileByteCounts` have `tiles_across * tiles_down * samples_per_pixel` entries
-- for every valid `i`, `TileOffsets[i + 1] == TileOffsets[i] + TileByteCounts[i] + 8`
+- the compressed tile payloads in the file form a single contiguous run, with the 4 byte COG leader and 4 byte trailer between every adjacent pair
 
-The last rule is the important one. It fixes the physical tile order in the file. Because tiles are written in that order, the header blob only needs the first tile offset and the compressed byte count for each tile. Every other offset is reconstructed.
+The last rule is the important one. Equivalently, when `TileOffsets` is sorted into ascending order along with the matching entries of `TileByteCounts`, every consecutive pair satisfies `sorted_offsets[i + 1] == sorted_offsets[i] + sorted_byte_counts[i] + 8`. The shortcog blob stores `tile_byte_counts` already in physical order, so the reader can reconstruct every tile offset from `base_tiles_offset` and the byte counts using a single prefix sum.
 
 ## Header blob
 
@@ -123,9 +123,9 @@ The absolute byte offset of the first compressed tile payload in the COG. This i
 
 ## Tile byte counts
 
-After the 31 byte header, the blob stores `N` little endian `uint32` values. Each entry holds the compressed byte size of one tile, equivalent to `TileByteCounts[i]` in the COG. Every value MUST be greater than zero.
+After the 31 byte header, the blob stores `N` little endian `uint32` values. Each entry is the compressed byte size of one tile from the source COG. Every value MUST be greater than zero.
 
-Tiles are ordered row by row inside each band, and bands are ordered by band index. The tile index for `(row, col, band)` is `band * (tiles_across * tiles_down) + row * tiles_across + col`.
+Tiles are stored in physical file order. For COGs written by the GDAL COG driver with `INTERLEAVE=TILE`, the physical order places all bands of one spatial tile contiguously before moving to the next tile. The tile index for `(row, col, band)` is `(row * tiles_across + col) * samples_per_pixel + band`.
 
 ## Offset reconstruction
 
