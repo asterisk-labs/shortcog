@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="img/banner.svg" alt="shortcog" />
+  <img src="img/banner.svg" alt="shortcog" width="750"/>
 </p>
 
 A COG profile for AI training data.
@@ -58,12 +58,12 @@ The batch entry point. Tile jobs from every sample share one thread pool call in
 
 MIT
 
----
 
-<p align="center">
-  Made with ♥ by <a href="https://asterisk.coop">Asterisk Labs</a>
-</p>
-
-<p align="center">
-  <img src="img/asterisk_banner.svg" alt="Asterisk Labs" />
-</p>
+<div align="center">
+  <br>
+  Made with ♥ by
+  <br><br>
+  <a href="https://asterisk.coop">
+    <img src="img/asterisk_banner.svg" alt="Asterisk Labs" width="400"/>
+  </a>
+</div>
