@@ -1,0 +1,23 @@
+[build-system]
+requires = ["scikit-build-core>=0.9", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "shortcog"
+version = "0.1.0"
+description = "A COG profile for AI training data"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Asterisk Labs" }]
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.scikit-build]
+cmake.version = ">=3.16"
+cmake.source-dir = "../.."
+wheel.packages = ["shortcog"]
