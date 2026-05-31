@@ -1,10 +1,6 @@
-// SPDX-License-Identifier: MIT
-// shortcog - fast read path for the shortcog COG profile.
-
 #pragma once
 
 #include "gdal_priv.h"
-#include "gdal_pam.h"
 #include "cpl_vsi.h"
 
 #include <cstdint>
@@ -13,23 +9,38 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <vector>
 
+// The build hides symbols by default (see CMakeLists.txt). SHORTCOG_API marks
+// the surface that tests and bindings link against. SHORTCOG_BUILD is set only
+// on the targets that compile the library.
+#if defined(_WIN32)
+#  if defined(SHORTCOG_BUILD)
+#    define SHORTCOG_API __declspec(dllexport)
+#  else
+#    define SHORTCOG_API __declspec(dllimport)
+#  endif
+#elif defined(SHORTCOG_BUILD)
+#  define SHORTCOG_API __attribute__((visibility("default")))
+#else
+#  define SHORTCOG_API
+#endif
+
 namespace shortcog {
 
-// 'SCOG' in little-endian ASCII.
-inline constexpr std::uint32_t MAGIC       = 0x474F4353;
-inline constexpr std::uint16_t VERSION     = 1;
-inline constexpr std::size_t   HEADER_SIZE = 31;
+class ThreadPool;
 
-// GDAL's COG driver brackets every tile payload with a 4-byte leader and
-// 4-byte trailer; advance offsets by tile_byte_counts[i] + this.
-inline constexpr std::uint64_t COG_TILE_FRAMING = 8;
+inline constexpr std::uint32_t MAGIC            = 0x333C333C;  // "<3<3"
+inline constexpr std::uint16_t VERSION          = 1;
+inline constexpr std::size_t   HEADER_SIZE      = 31;
+inline constexpr std::uint64_t COG_TILE_FRAMING = 8;          // 4B leader + 4B trailer
 
-// On-disk layout of the first HEADER_SIZE bytes. Little-endian, no padding.
-// Field semantics live in docs/SPEC.md.
+
+// Blob format
+
 #pragma pack(push, 1)
 struct BlobHeader {
     std::uint32_t magic;
@@ -39,6 +50,7 @@ struct BlobHeader {
     std::uint16_t tile_width;
     std::uint16_t tile_length;
     std::uint16_t samples_per_pixel;
+    // For complex formats (5, 6) this holds the summed component widths.
     std::uint8_t  bits_per_sample;
     std::uint8_t  sample_format;
     std::uint8_t  predictor;
@@ -62,14 +74,11 @@ enum class ParseError {
     tile_count_overflow,
     tile_size_overflow,
     non_positive_tile_byte_count,
-    non_monotonic_offsets,
+    offset_overflow,
 };
 
-[[nodiscard]] std::string_view describe(ParseError e) noexcept;
+[[nodiscard]] SHORTCOG_API std::string_view describe(ParseError e) noexcept;
 
-// Validated blob. BlobHeader fields, derived grid quantities, the trailing
-// tile_byte_counts array, and the precomputed tile_offsets so tile_offset(i)
-// stays O(1) on the hot path.
 struct Header {
     std::uint32_t image_width{};
     std::uint32_t image_length{};
@@ -88,15 +97,13 @@ struct Header {
     std::size_t   max_tile_size{};
     GDALDataType  gdal_type{GDT_Unknown};
 
-    std::vector<std::uint32_t> tile_byte_counts;  // length == tile_count
-    std::vector<std::uint64_t> tile_offsets;      // length == tile_count, prefix sums
+    std::vector<std::uint32_t> tile_byte_counts;
+    std::vector<std::uint64_t> tile_offsets;
 
     [[nodiscard]] std::uint64_t tile_offset(std::uint32_t i) const noexcept {
         return tile_offsets[i];
     }
 
-    // Physical file order, bands inner-most, matching the GDAL COG driver
-    // INTERLEAVE=TILE layout. See SPEC.md "Tile byte counts".
     [[nodiscard]] std::uint32_t tile_index(std::uint32_t row,
                                            std::uint32_t col,
                                            std::uint32_t band) const noexcept {
@@ -104,61 +111,104 @@ struct Header {
     }
 };
 
-// Blob = HEADER_SIZE bytes followed by tile_count little-endian uint32 byte
-// counts. Returns the first validation failure encountered.
-[[nodiscard]] std::expected<Header, ParseError>
-parse_blob(std::span<const std::byte> blob) noexcept;
+// Allocates the tile arrays, so not noexcept. Format errors use ParseError.
+[[nodiscard]] SHORTCOG_API std::expected<Header, ParseError>
+parse_blob(std::span<const std::byte> blob);
 
-// GDT_Unknown for any combination outside the shortcog profile.
-[[nodiscard]] GDALDataType infer_gdal_type(std::uint8_t bits_per_sample,
-                                           std::uint8_t sample_format) noexcept;
+[[nodiscard]] SHORTCOG_API GDALDataType
+infer_gdal_type(std::uint8_t bits_per_sample,
+                std::uint8_t sample_format) noexcept;
 
-// File I/O is serialized on io_mutex_; decompression runs outside the lock,
-// so worker threads can decompress in parallel while reads stay serial.
-class TileReader {
-public:
-    TileReader(std::shared_ptr<VSILFILE> file, const Header& header) noexcept;
-    ~TileReader();
 
-    TileReader(const TileReader&)            = delete;
-    TileReader& operator=(const TileReader&) = delete;
-    TileReader(TileReader&&)                 = delete;
-    TileReader& operator=(TileReader&&)      = delete;
+// Predictor
 
-    // Preconditions.
-    //   out.size() == header.max_tile_size.
-    //   compressed_scratch is caller-owned, reused across calls on the same
-    //   thread, and grows as needed.
-    // On failure, reports via CPLError and returns false.
-    [[nodiscard]] bool read_tile(std::uint32_t tile_idx,
-                                 std::span<std::byte> out,
-                                 std::vector<std::byte>& compressed_scratch) const;
+SHORTCOG_API void apply_horizontal_predictor(std::span<std::byte> tile,
+                                              std::uint16_t tile_width,
+                                              std::uint16_t tile_length,
+                                              std::uint8_t  bytes_per_sample) noexcept;
 
-    [[nodiscard]] std::shared_ptr<VSILFILE> file() const noexcept { return file_; }
 
-private:
-    std::shared_ptr<VSILFILE> file_;
-    const Header&             header_;
-    mutable std::mutex        io_mutex_;
+// Plan / Executor
 
-    void apply_horizontal_predictor(std::span<std::byte> tile) const noexcept;
+struct TileSpec {
+    std::uint8_t  predictor;
+    std::uint16_t tile_width;
+    std::uint16_t tile_length;
+    std::uint8_t  bytes_per_sample;
+    std::size_t   tile_bytes;
 };
 
-// Defined in the .cpp so this header carries no specific pool dependency.
-class ThreadPool;
+// One tile, single band. When direct is set the tile decompresses straight into
+// the output; otherwise it lands in scratch and the w x h rect is copied to dst
+// with dst_pitch per row and dst_pixel_stride per pixel. All positions are in
+// the result buffer, never the disk layout.
+struct TileTask {
+    VSILFILE*     file;
+    std::uint64_t offset;
+    std::uint32_t compressed_size;
+    std::byte*    direct;
+    std::byte*    dst;
+    std::uint32_t src_x;
+    std::uint32_t src_y;
+    std::uint32_t w;
+    std::uint32_t h;
+    std::size_t   dst_pitch;
+    std::size_t   dst_pixel_stride;
+};
 
-class Dataset;
+struct Plan {
+    std::vector<TileTask> tasks;
+    TileSpec              spec;
+};
 
-// One Band per sample (samples_per_pixel bands total).
-class Band : public GDALPamRasterBand {
+class Executor {
 public:
-    Band(Dataset* dataset, int band_index) noexcept;
+    explicit Executor(ThreadPool* pool) noexcept;
+    [[nodiscard]] bool run(const Plan& plan) const;
+
+private:
+    ThreadPool* pool_;
+};
+
+
+// Layout
+
+// Output placement from compile_layout. sn/sb/sy/sx are per-axis element
+// strides, scaled by bytes_per_sample at read time. native means the block is
+// already plain (n, b, y, x) C-contiguous so a binding adopts it without a
+// copy. It does not select the direct-decompress path; read_native decides that
+// from contiguous_output.
+struct LayoutPlan {
+    std::vector<std::int64_t> shape;
+    std::int64_t              sn{};
+    std::int64_t              sb{};
+    std::int64_t              sy{};
+    std::int64_t              sx{};
+    bool                      native{};
+};
+
+// Maps a pattern to per-axis strides for a read of size (n, b, y, x), the
+// post-selection extents. A single image uses n = 1 with no n in the pattern.
+// Whole-axis permute and merge only. Allocates, so not noexcept.
+[[nodiscard]] SHORTCOG_API std::expected<LayoutPlan, std::string>
+compile_layout(std::string_view pattern,
+               std::int64_t n, std::int64_t b,
+               std::int64_t y, std::int64_t x);
+
+
+// Image
+
+class Image;
+
+class Band : public GDALRasterBand {
+public:
+    Band(Image* image, int band_index) noexcept;
     ~Band() override = default;
 
     Band(const Band&)            = delete;
     Band& operator=(const Band&) = delete;
 
-    CPLErr IReadBlock(int x_block, int y_block, void* image) override;
+    CPLErr IReadBlock(int x_block, int y_block, void* buffer) override;
 
     CPLErr IRasterIO(GDALRWFlag rw_flag, int x_off, int y_off,
                      int x_size, int y_size, void* data,
@@ -166,26 +216,31 @@ public:
                      GSpacing pixel_space, GSpacing line_space,
                      GDALRasterIOExtraArg* extra_arg) override;
 
+    bool MayMultiBlockReadingBeMultiThreaded() const override;
+
+    // The default block cache is not internally locked, so serialize the
+    // entry points that GDAL_OF_THREAD_SAFE may reach from several threads.
+    GDALRasterBlock* GetLockedBlockRef(int x_block, int y_block,
+                                       int just_initialize = FALSE) override;
+    GDALRasterBlock* TryGetLockedBlockRef(int x_block, int y_block) override;
+    CPLErr FlushBlock(int x_block, int y_block,
+                      int write_dirty = TRUE) override;
+
 private:
-    Dataset* dataset_{nullptr};
+    Image*               image_{nullptr};
+    std::recursive_mutex block_cache_mutex_;
 };
 
-// Serves tiles from a shortcog-compliant COG using the header blob,
-// bypassing the IFD entirely.
-class Dataset : public GDALPamDataset {
-    friend class Band;
-
+class SHORTCOG_API Image : public GDALDataset {
 public:
-    // Required. Base64-encoded header blob.
-    static constexpr std::string_view OPEN_OPTION_HEADER  = "SHORTCOG_HEADER";
-    // Integer or "ALL_CPUS". Defaults to 1.
-    static constexpr std::string_view OPEN_OPTION_THREADS = "NUM_THREADS";
+    static constexpr const char* OPEN_OPTION_HEADER  = "SHORTCOG_HEADER";
+    static constexpr const char* OPEN_OPTION_THREADS = "NUM_THREADS";
 
-    Dataset();
-    ~Dataset() override;
+    Image();
+    ~Image() override;
 
-    Dataset(const Dataset&)            = delete;
-    Dataset& operator=(const Dataset&) = delete;
+    Image(const Image&)            = delete;
+    Image& operator=(const Image&) = delete;
 
     static GDALDataset* Open(GDALOpenInfo* open_info);
     static int          Identify(GDALOpenInfo* open_info);
@@ -198,42 +253,72 @@ public:
                      GDALRasterIOExtraArg* extra_arg) override;
 
     [[nodiscard]] const Header& header() const noexcept { return header_; }
+    [[nodiscard]] VSILFILE*     file()   const noexcept { return file_.get(); }
+    [[nodiscard]] ThreadPool*   pool()   const noexcept { return pool_; }
+
+    // Reads into dst with the layout b/y/x strides. sn is ignored, that is
+    // ImageCube's job. IRasterIO clips and validates the window.
+    [[nodiscard]] bool read(std::span<const int> bands,
+                            int y_off, int y_size,
+                            int x_off, int x_size,
+                            const LayoutPlan& layout,
+                            std::byte* dst);
 
 private:
-    Header                      header_{};
-    std::unique_ptr<TileReader> tile_reader_;
-    std::shared_ptr<int>        validity_token_{std::make_shared<int>(0)};
-    std::unique_ptr<ThreadPool> thread_pool_;
-
-    CPLErr read_single_pixel(int x_off, int y_off,
-                             int band_count, const int* band_map,
-                             void* data, GDALDataType buf_type,
-                             GSpacing pixel_space, GSpacing band_space);
-
-    CPLErr read_tile_aligned(int x_off, int y_off, int x_size, int y_size,
-                             void* data, int buf_x_size, int buf_y_size,
-                             GDALDataType buf_type,
-                             int band_count, const int* band_map,
-                             GSpacing pixel_space, GSpacing line_space, GSpacing band_space);
-
-    CPLErr read_resampled(int x_off, int y_off, int x_size, int y_size,
-                          void* data, int buf_x_size, int buf_y_size,
-                          GDALDataType buf_type,
-                          int band_count, const int* band_map,
-                          GSpacing pixel_space, GSpacing line_space, GSpacing band_space,
-                          GDALRasterIOExtraArg* extra_arg);
-
-    [[nodiscard]] bool is_tile_aligned_request(int x_off, int y_off,
-                                               int x_size, int y_size,
-                                               int buf_x_size, int buf_y_size) const noexcept;
+    Header                    header_{};
+    std::shared_ptr<VSILFILE> file_;
+    ThreadPool*               pool_{nullptr};
 };
 
-// Idempotent.
-void register_driver();
+
+// ImageCube
+
+class SHORTCOG_API ImageCube {
+public:
+    // Fails unless every image shares grid, tile size, band count, dtype and
+    // predictor. Mismatched inputs are an error, there is no ragged form.
+    [[nodiscard]] static std::expected<ImageCube, std::string>
+    create(std::vector<std::shared_ptr<Image>> images);
+
+    ImageCube(const ImageCube&)                = delete;
+    ImageCube& operator=(const ImageCube&)     = delete;
+    ImageCube(ImageCube&&) noexcept            = default;
+    ImageCube& operator=(ImageCube&&) noexcept = default;
+
+    [[nodiscard]] std::size_t   size() const noexcept;
+    [[nodiscard]] const Header& spec() const noexcept;
+
+    // n_index and bands are 1-based and ordered, the window is clipped to the
+    // shared extent, and layout places each axis in dst.
+    [[nodiscard]] bool read(std::span<const int> n_index,
+                            std::span<const int> bands,
+                            int y_off, int y_size,
+                            int x_off, int x_size,
+                            const LayoutPlan& layout,
+                            std::byte* dst) const;
+
+private:
+    explicit ImageCube(std::vector<std::shared_ptr<Image>> images) noexcept;
+
+    std::vector<std::shared_ptr<Image>> images_;
+};
+
+
+// Builder
+
+// Stays noexcept. Its large allocations are wrapped and reported as a string.
+[[nodiscard]] SHORTCOG_API std::expected<std::vector<std::byte>, std::string>
+build_blob_from_file(const char* path) noexcept;
+
+SHORTCOG_API void register_driver();
 
 }  // namespace shortcog
 
+
 extern "C" {
-    // GDAL plugin discovery entry point.
     void CPL_DLL GDALRegister_SHORTCOG();
+
+    // Free the buffer with shortcog_free_buffer.
+    unsigned char* CPL_DLL shortcog_build_blob(const char* path, std::size_t* out_size);
+    void           CPL_DLL shortcog_free_buffer(unsigned char* buf);
 }
