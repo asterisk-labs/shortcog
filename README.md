@@ -27,11 +27,14 @@ Run this once per asset. It reads the file to extract the tile table and returns
 ## Open
 
 ```python
-img  = shortcog.open("scene.tif", header)    # one asset  ->  axes  b y x
-cube = shortcog.open(paths, headers)         # many       ->  axes  n b y x
+img  = shortcog.open("scene.tif", header)                 # one asset  ->  axes  b y x
+img  = shortcog.open("scene.tif", header, num_threads=4)  # decompress tiles in parallel
+cube = shortcog.open(paths, headers)                      # many       ->  axes  n b y x
 ```
 
-`open` is local. It rebuilds the tile offsets from the blob by prefix sum and touches no bytes, so opening a million assets is essentially free. With many assets it builds a cube and validates that they share grid, dtype, and predictor. If they do not, it raises. There is no ragged container, on purpose. If you really have mismatched assets, open them one at a time and loop.
+`open` is local. It rebuilds the tile offsets from the blob by prefix sum and touches no bytes, so opening a million assets is essentially free. With many assets it builds a cube and validates that they share grid, tile size, band count, dtype, and predictor. If they do not, it raises. There is no ragged container, on purpose. If you really have mismatched assets, open them one at a time and loop.
+
+`num_threads` sets the tile-decompression parallelism. The worker pool is process-global and sized on first use, so the first `open` that asks for threads fixes the count for the whole process; later calls share it. Absent means single-threaded.
 
 ## Read
 
@@ -40,19 +43,13 @@ arr = img.read("b y x", b=(0,3), y=(0,512), x=(0,512))   # (3,512,512)
 arr = img.read("y x b", b=[3,2,1])                        # HWC, bands reordered
 ```
 
-Returns a numpy array. The string is the output layout. Every axis named in it can be constrained by a same named argument:
+Returns a numpy array. The string is the output layout. Every axis you name in it can take a same named argument that says what to read from it.
 
-- a tuple `(start, stop)` is a slice. Contiguous, and the fast path: a slice maps to one byte contiguous run of tiles, which is what the reader wants.
-- a list `[i, j, k]` is a cardinal selection, read in that exact order. Flexible, but it can scatter the read.
-- omitted means the whole axis.
+- a tuple `(start, stop)` is a slice, a range of the axis. This is the cheap case, because a slice keeps the tiles you need in the order they sit on disk.
+- a list `[i, j, k]` picks those positions in that exact order. More flexible, but it can scatter the read.
+- leaving an axis out means you want all of it.
 
-Prefer slices. Because the profile forces `INTERLEAVE=TILE`, the tiles of a band range sit contiguously on disk, so even `b=(0,3)` stays a single contiguous read.
-
-```python
-arr = img.read("b y x", b=(0,3), num_threads=4, pin_memory=False)
-```
-
-`num_threads` controls tile decompression parallelism. `pin_memory=True` writes into a page locked buffer for faster transfer to GPU in single process pipelines.
+Use slices when you can. The profile stores all bands of a tile together, with samples innermost, so a band slice reads each tile's bands in order and never steps over the bands you did not ask for. The reader still does one read per tile, it does not merge them, so what you gain is locality and readahead, not a single seek. A list over `b` or `n` breaks that order and can spread the reads across the file.
 
 ## Stack
 
@@ -62,7 +59,9 @@ arr = cube.read("(n b) y x", b=(0,4))           # fuse layers and bands into cha
 arr = cube.read("n (y x) b", b=(0,4))           # tokens per layer
 ```
 
-A cube adds the `n` axis over the opened assets, with the same idiom: slice `n` for a contiguous span, list it to pick. Because a cube is dense, `n` takes part in the layout, so you can reorder it, fuse it as `(n b)`, or unfold the spatial axes into tokens. Slices on every axis keep the whole read byte contiguous.
+A cube adds an `n` axis over the assets you opened. It works just like the other axes. Slice `n` to take a span, or pass a list to pick assets in the order you want. Since `n` is part of the layout you can reorder it, fuse it into the channels as `(n b)`, or unfold the spatial axes into tokens.
+
+Each asset is its own file, so a cube read just walks the assets one by one. Slicing still helps inside each one, because a slice keeps that asset's tiles in the order they sit on disk.
 
 ## License
 

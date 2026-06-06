@@ -3,7 +3,7 @@
 Specification 1.0.0  
 Binary format 1  
 Status Draft  
-Date 2026-05-30  
+Date 2026-06-05  
 License CC BY 4.0  
 
 shortcog is a profile for Cloud Optimized GeoTIFFs (COGs), paired with a compact binary header that lets a reader locate every tile without parsing the COG IFD.
@@ -37,7 +37,8 @@ A COG is shortcog compliant only when all of the following are true.
 - the `(sample_format, bits_per_sample)` pair is one of the valid sample encodings listed in this specification;
 - `tile_width <= image_width` and `tile_length <= image_length`;
 - `TileOffsets` and `TileByteCounts` are present;
-- `TileOffsets` and `TileByteCounts` have `tiles_across * tiles_down * samples_per_pixel` entries; and
+- `TileOffsets` and `TileByteCounts` have `tiles_across * tiles_down * samples_per_pixel` entries;
+- no tile is sparse. Every tile payload is physically present in the file and every `TileByteCounts` entry is greater than zero. A sparse file leaves holes where it omits zero or nodata tiles, and those holes break the prefix-sum reconstruction; and
 - the compressed tile payloads form one contiguous run in tile-index order, with a 4-byte COG leader before each payload and a 4-byte COG trailer after each payload, as described in Contiguity and offset reconstruction.
 
 
@@ -87,8 +88,9 @@ These creation options matter for compliance:
 - `INTERLEAVE=TILE` sets the physical tile order required by shortcog.
 - `COMPRESS=ZSTD` sets the required compression.
 - `OVERVIEWS=NONE` is required because this profile allows exactly one IFD and forbids overviews.
-- `SPARSE_OK=FALSE` is required because omitted sparse tiles have zero offsets and byte counts, while shortcog requires every tile payload to be present and every byte count to be greater than zero.
 - `BIGTIFF=YES` is required because the profile accepts BigTIFF only. With compression, GDAL cannot know the final size in advance, so the default BigTIFF heuristic is not enough for this profile.
+
+`SPARSE_OK=FALSE` is already the default. What the profile really needs is that no tile is missing and no byte count is zero. `SPARSE_OK=TRUE` would break that, because it drops empty tiles and leaves holes. You do not have to trust the flag though. The check further down rebuilds the offsets and rejects any gap or any zero byte count, so a file that passes it is fine no matter how it was made. Just do not set `SPARSE_OK=TRUE`.
 
 To use horizontal differencing (`Predictor = 2`), replace `-co PREDICTOR=NO` with:
 
