@@ -2,6 +2,8 @@
 #                 SHORTCOG, SHA256 each band, compare to the sidecar.
 # test_threading  opens the multi-band fixture with NUM_THREADS=4 and reads it
 #                 from several threads at once.
+# test_layout     checks compile_layout strides and that the read engine places
+#                 each axis where the layout says.
 # test_parser     feeds malformed blobs to parse_blob, all built in memory.
 
 find_package(nlohmann_json 3.10 QUIET)
@@ -30,6 +32,7 @@ endfunction()
 
 shortcog_add_test(test_fixtures  nlohmann_json::nlohmann_json)
 shortcog_add_test(test_threading nlohmann_json::nlohmann_json)
+shortcog_add_test(test_layout)
 shortcog_add_test(test_parser)
 
 # Override from the command line when CI mounts the corpus elsewhere.
@@ -42,6 +45,8 @@ add_test(NAME test_fixtures
          COMMAND $<TARGET_FILE:test_fixtures> "${SHORTCOG_TEST_FIXTURE_DIR}")
 add_test(NAME test_threading
          COMMAND $<TARGET_FILE:test_threading> "${SHORTCOG_TEST_FIXTURE_DIR}")
+add_test(NAME test_layout
+         COMMAND $<TARGET_FILE:test_layout> "${SHORTCOG_TEST_FIXTURE_DIR}")
 add_test(NAME test_parser
          COMMAND $<TARGET_FILE:test_parser>)
 
@@ -51,6 +56,9 @@ set_tests_properties(test_fixtures PROPERTIES
 set_tests_properties(test_threading PROPERTIES
     FAIL_REGULAR_EXPRESSION "FAIL|cannot open|manifest.json parse error"
     LABELS                  "shortcog;threading")
+set_tests_properties(test_layout PROPERTIES
+    FAIL_REGULAR_EXPRESSION "FAIL|build_blob failed"
+    LABELS                  "shortcog;layout")
 set_tests_properties(test_parser PROPERTIES
     FAIL_REGULAR_EXPRESSION "FAIL"
     LABELS                  "shortcog;parser")
