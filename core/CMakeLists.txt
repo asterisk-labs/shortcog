@@ -6,39 +6,36 @@ project(shortcog
     LANGUAGES   CXX
 )
 
-# ---- Options -----------------------------------------------------------------
-
 option(SHORTCOG_BUILD_PLUGIN     "Build the GDAL auto-loadable plugin"          ON)
 option(SHORTCOG_BUILD_SHARED_LIB "Build standalone libshortcog for direct link" OFF)
 option(SHORTCOG_BUILD_TESTS      "Build tests"                                  OFF)
 option(SHORTCOG_STATIC_ZSTD      "Link zstd statically"                         OFF)
 
-# Tests link against shortcog::shortcog to exercise the public API surface,
-# so enabling tests implies the standalone library.
+# e.g. -DSHORTCOG_SANITIZE=thread, or address,undefined. Empty = off. Use a
+# throwaway build dir for this, it's a test-only configuration.
+set(SHORTCOG_SANITIZE "" CACHE STRING "Sanitizer to compile and link with")
+
+# Tests link shortcog::shortcog, so they need the standalone library.
 if(SHORTCOG_BUILD_TESTS AND NOT SHORTCOG_BUILD_SHARED_LIB)
     message(STATUS "SHORTCOG_BUILD_TESTS=ON -> auto-enabling SHORTCOG_BUILD_SHARED_LIB")
     set(SHORTCOG_BUILD_SHARED_LIB ON)
 endif()
 
-# ---- Defaults ----------------------------------------------------------------
-
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-set(CMAKE_CXX_STANDARD             23)
-set(CMAKE_CXX_STANDARD_REQUIRED    ON)
-set(CMAKE_CXX_EXTENSIONS           OFF)
+set(CMAKE_CXX_STANDARD              23)
+set(CMAKE_CXX_STANDARD_REQUIRED     ON)
+set(CMAKE_CXX_EXTENSIONS            OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Hide symbols by default. The C++ surface is re-exported with SHORTCOG_API and
-# the extern "C" entry points with GDAL's CPL_DLL.
+# Hide everything by default; the C++ surface is re-exported with SHORTCOG_API
+# and the extern "C" entry points with GDAL's CPL_DLL.
 set(CMAKE_CXX_VISIBILITY_PRESET     hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
 include(GNUInstallDirs)
-
-# ---- Dependencies ------------------------------------------------------------
 
 find_package(GDAL 3.12 CONFIG REQUIRED)
 
@@ -58,8 +55,6 @@ else()
     set(SHORTCOG_ZSTD_TARGET PkgConfig::zstd)
 endif()
 
-# ---- Sources -----------------------------------------------------------------
-
 set(SHORTCOG_SOURCES
     src/parser.cpp
     src/builder.cpp
@@ -70,7 +65,7 @@ set(SHORTCOG_SOURCES
     src/imagecube.cpp
 )
 
-# Compile/link config shared by every binary we produce.
+# Compile and link settings shared by every target.
 add_library(shortcog_config INTERFACE)
 target_include_directories(shortcog_config INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -85,16 +80,20 @@ target_compile_options(shortcog_config INTERFACE
     $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
 )
 
-# ---- Plugin (auto-discovered by GDAL) ----------------------------------------
-#
-# GDAL's plugin loader scans ${prefix}/lib/gdalplugins (or $GDAL_DRIVER_PATH)
-# for files named gdal_<NAME>.{so,dll,dylib} and calls GDALRegister_<NAME>().
-# The empty PREFIX below strips the "lib" that CMake would otherwise prepend.
+# A sanitizer applies to every target through this interface: lib, plugin,
+# tests. It has to be on both the compile and the link line.
+if(SHORTCOG_SANITIZE)
+    target_compile_options(shortcog_config INTERFACE
+        -fsanitize=${SHORTCOG_SANITIZE} -fno-omit-frame-pointer -g)
+    target_link_options(shortcog_config INTERFACE
+        -fsanitize=${SHORTCOG_SANITIZE})
+endif()
 
+# GDAL's loader scans for gdal_<NAME>.{so,dll,dylib} and calls
+# GDALRegister_<NAME>(). The empty PREFIX strips the "lib" CMake would prepend.
 if(SHORTCOG_BUILD_PLUGIN)
     add_library(gdal_SHORTCOG MODULE ${SHORTCOG_SOURCES})
     target_link_libraries(gdal_SHORTCOG PRIVATE shortcog_config)
-    # Defines the library symbols, so SHORTCOG_API exports rather than imports.
     target_compile_definitions(gdal_SHORTCOG PRIVATE SHORTCOG_BUILD)
     set_target_properties(gdal_SHORTCOG PROPERTIES
         PREFIX      ""
@@ -107,16 +106,12 @@ if(SHORTCOG_BUILD_PLUGIN)
     )
 endif()
 
-# ---- Standalone shared library -----------------------------------------------
-#
-# For apps that prefer to link directly and call shortcog::register_driver()
-# themselves rather than relying on plugin auto-discovery.
-
+# For apps that link directly and call shortcog::register_driver() themselves
+# instead of relying on plugin auto-discovery.
 if(SHORTCOG_BUILD_SHARED_LIB)
     add_library(shortcog SHARED ${SHORTCOG_SOURCES})
     add_library(shortcog::shortcog ALIAS shortcog)
     target_link_libraries(shortcog PUBLIC shortcog_config)
-    # PRIVATE so consumers (tests, bindings) see SHORTCOG_API as an import.
     target_compile_definitions(shortcog PRIVATE SHORTCOG_BUILD)
     set_target_properties(shortcog PROPERTIES
         VERSION   ${PROJECT_VERSION}
@@ -134,14 +129,10 @@ if(SHORTCOG_BUILD_SHARED_LIB)
     )
 endif()
 
-# ---- Tests -------------------------------------------------------------------
-
 if(SHORTCOG_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
-
-# ---- Configuration summary ---------------------------------------------------
 
 message(STATUS "")
 message(STATUS "shortcog ${PROJECT_VERSION}")
@@ -150,4 +141,5 @@ message(STATUS "  zstd:           ${SHORTCOG_ZSTD_TARGET}")
 message(STATUS "  Plugin:         ${SHORTCOG_BUILD_PLUGIN}")
 message(STATUS "  Standalone lib: ${SHORTCOG_BUILD_SHARED_LIB}")
 message(STATUS "  Tests:          ${SHORTCOG_BUILD_TESTS}")
+message(STATUS "  Sanitize:       ${SHORTCOG_SANITIZE}")
 message(STATUS "")

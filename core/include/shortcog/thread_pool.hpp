@@ -11,19 +11,12 @@
 
 namespace shortcog {
 
-// A small fixed-size thread pool. shortcog keeps GDAL's thread-safe machinery
-// (GDAL_OF_THREAD_SAFE, the block cache, MayMultiBlockReadingBeMultiThreaded),
-// but GDAL's own worker pool lives behind internal headers that are not
-// installed, so an out-of-tree build cannot reach it. This is the
-// self-contained replacement: one process-global pool, shared by every Image.
-//
-// Work is grouped into batches. A Batch is the analogue of GDAL's CPLJobQueue:
-// several batches share the same workers, and wait() blocks only on the jobs
-// of that batch, so concurrent reads never wait on each other. Nesting is not
-// supported: a job running on a worker must not create a batch and wait on it,
-// which would deadlock once every worker is blocked the same way. shortcog
-// never does this; a read is planned and run from the calling thread, not from
-// inside a worker.
+// Small fixed-size pool, one process-global instance shared by every Image.
+// GDAL's own worker pool lives behind headers that aren't installed, so an
+// out-of-tree build can't reach it; this is the replacement. Work goes in
+// batches: wait() blocks only on its own batch's jobs, so concurrent reads
+// don't wait on each other. No nesting — a worker must never create a batch
+// and wait on it. shortcog plans and runs reads from the calling thread.
 class ThreadPool {
 public:
     explicit ThreadPool(unsigned threads);
@@ -119,9 +112,8 @@ inline void ThreadPool::Batch::wait()
 }
 
 
-// Process-global pool, sized on first use, analogous to
-// GDALGetGlobalThreadPool. The thread count from the first caller that builds
-// it wins; later callers share it regardless of their own request.
+// Sized on first use: the first caller's thread count wins, later callers
+// share it regardless of what they ask for.
 inline ThreadPool& global_thread_pool(unsigned threads)
 {
     static ThreadPool pool(threads);
