@@ -1,7 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
 
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" SHORTCOG_VERSION_FULL)
+string(STRIP "${SHORTCOG_VERSION_FULL}" SHORTCOG_VERSION_FULL)
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" SHORTCOG_VERSION_NUMERIC
+    "${SHORTCOG_VERSION_FULL}")
+
 project(shortcog
-    VERSION     1.0.0
+    VERSION     ${SHORTCOG_VERSION_NUMERIC}
     DESCRIPTION "A COG profile for AI training data"
     LANGUAGES   CXX
 )
@@ -63,6 +68,7 @@ set(SHORTCOG_SOURCES
     src/pattern.cpp
     src/image.cpp
     src/imagecube.cpp
+    src/capi.cpp
 )
 
 # Compile and link settings shared by every target.
@@ -94,7 +100,10 @@ endif()
 if(SHORTCOG_BUILD_PLUGIN)
     add_library(gdal_SHORTCOG MODULE ${SHORTCOG_SOURCES})
     target_link_libraries(gdal_SHORTCOG PRIVATE shortcog_config)
-    target_compile_definitions(gdal_SHORTCOG PRIVATE SHORTCOG_BUILD)
+    target_compile_definitions(gdal_SHORTCOG PRIVATE
+        SHORTCOG_BUILD
+        SHORTCOG_VERSION_STRING="${SHORTCOG_VERSION_FULL}"
+    )
     set_target_properties(gdal_SHORTCOG PROPERTIES
         PREFIX      ""
         OUTPUT_NAME "gdal_SHORTCOG"
@@ -112,7 +121,10 @@ if(SHORTCOG_BUILD_SHARED_LIB)
     add_library(shortcog SHARED ${SHORTCOG_SOURCES})
     add_library(shortcog::shortcog ALIAS shortcog)
     target_link_libraries(shortcog PUBLIC shortcog_config)
-    target_compile_definitions(shortcog PRIVATE SHORTCOG_BUILD)
+    target_compile_definitions(shortcog PRIVATE
+        SHORTCOG_BUILD
+        SHORTCOG_VERSION_STRING="${SHORTCOG_VERSION_FULL}"
+    )
     set_target_properties(shortcog PROPERTIES
         VERSION   ${PROJECT_VERSION}
         SOVERSION ${PROJECT_VERSION_MAJOR}
@@ -122,6 +134,9 @@ if(SHORTCOG_BUILD_SHARED_LIB)
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+    install(FILES include/shortcog.h
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     )
     install(DIRECTORY include/shortcog
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
@@ -135,7 +150,7 @@ if(SHORTCOG_BUILD_TESTS)
 endif()
 
 message(STATUS "")
-message(STATUS "shortcog ${PROJECT_VERSION}")
+message(STATUS "shortcog ${SHORTCOG_VERSION_FULL}")
 message(STATUS "  GDAL:           ${GDAL_VERSION}")
 message(STATUS "  zstd:           ${SHORTCOG_ZSTD_TARGET}")
 message(STATUS "  Plugin:         ${SHORTCOG_BUILD_PLUGIN}")

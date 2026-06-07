@@ -467,9 +467,3 @@ void register_driver()
 }
 
 }  // namespace shortcog
-
-
-extern "C" void CPL_DLL GDALRegister_SHORTCOG()
-{
-    shortcog::register_driver();
-}

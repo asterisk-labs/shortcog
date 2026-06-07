@@ -101,9 +101,10 @@ struct DsCloser {
 };
 using DsPtr = std::unique_ptr<GDALDataset, DsCloser>;
 
-std::string b64(const unsigned char* p, std::size_t n)
+std::string b64(std::span<const std::byte> bytes)
 {
-    char* s = CPLBase64Encode(static_cast<int>(n), p);
+    char* s = CPLBase64Encode(static_cast<int>(bytes.size()),
+                              reinterpret_cast<const unsigned char*>(bytes.data()));
     std::string out(s);
     CPLFree(s);
     return out;
@@ -114,7 +115,7 @@ GDALDataset* open_raw(const fs::path& path, const std::string& header)
     CPLStringList opts;
     opts.AddNameValue("SHORTCOG_HEADER", header.c_str());
     const char* drv[] = {"SHORTCOG", nullptr};
-    return static_cast<GDALDataset*>(GDALOpenEx(
+    return GDALDataset::FromHandle(GDALOpenEx(
         path.string().c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
         drv, opts.List(), nullptr));
 }
@@ -269,14 +270,13 @@ int main(int argc, char** argv)
 
     test_compile_layout();
 
-    std::size_t blob_size = 0;
-    unsigned char* blob = shortcog_build_blob(path.string().c_str(), &blob_size);
+    auto blob = shortcog::build_blob_from_file(path.string().c_str());
     if (!blob) {
-        std::fprintf(stderr, "build_blob failed for %s\n", path.string().c_str());
+        std::fprintf(stderr, "build_blob failed for %s: %s\n",
+                     path.string().c_str(), blob.error().c_str());
         return 1;
     }
-    const std::string header = b64(blob, blob_size);
-    shortcog_free_buffer(blob);
+    const std::string header = b64(*blob);
 
     test_engine_image(path, header);
     test_engine_cube(path, header);

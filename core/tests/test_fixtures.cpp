@@ -36,35 +36,6 @@ struct GdalDatasetCloser {
 };
 using DatasetPtr = std::unique_ptr<GDALDataset, GdalDatasetCloser>;
 
-// Owns a shortcog_build_blob buffer; frees it with the matching FFI free,
-// not operator delete.
-struct BlobOwner {
-    unsigned char* data = nullptr;
-    std::size_t    size = 0;
-
-    BlobOwner() = default;
-    ~BlobOwner() { if (data) shortcog_free_buffer(data); }
-    BlobOwner(const BlobOwner&)            = delete;
-    BlobOwner& operator=(const BlobOwner&) = delete;
-
-    BlobOwner(BlobOwner&& o) noexcept : data(o.data), size(o.size)
-    {
-        o.data = nullptr;
-        o.size = 0;
-    }
-    BlobOwner& operator=(BlobOwner&& o) noexcept
-    {
-        if (this != &o) {
-            if (data) shortcog_free_buffer(data);
-            data = o.data; size = o.size;
-            o.data = nullptr; o.size = 0;
-        }
-        return *this;
-    }
-
-    [[nodiscard]] bool valid() const noexcept { return data != nullptr; }
-};
-
 // Mute GDAL's handler while we expect failures (negative fixtures).
 struct QuietGdalErrors {
     QuietGdalErrors()  { CPLPushErrorHandler(CPLQuietErrorHandler); }
@@ -82,19 +53,13 @@ std::string to_hex(std::span<const std::uint8_t> bytes)
     return s;
 }
 
-std::string base64_encode(std::span<const unsigned char> bytes)
+std::string base64_encode(std::span<const std::byte> bytes)
 {
-    char* b64 = CPLBase64Encode(static_cast<int>(bytes.size()), bytes.data());
+    char* b64 = CPLBase64Encode(static_cast<int>(bytes.size()),
+                                reinterpret_cast<const unsigned char*>(bytes.data()));
     std::string out(b64);
     CPLFree(b64);
     return out;
-}
-
-BlobOwner build_blob(const fs::path& path)
-{
-    BlobOwner b;
-    b.data = shortcog_build_blob(path.string().c_str(), &b.size);
-    return b;
 }
 
 DatasetPtr open_shortcog(const fs::path& path, const std::string& header_b64)
@@ -102,7 +67,7 @@ DatasetPtr open_shortcog(const fs::path& path, const std::string& header_b64)
     CPLStringList opts;
     opts.AddNameValue("SHORTCOG_HEADER", header_b64.c_str());
     const char* drivers[] = {"SHORTCOG", nullptr};
-    return DatasetPtr(static_cast<GDALDataset*>(GDALOpenEx(
+    return DatasetPtr(GDALDataset::FromHandle(GDALOpenEx(
         path.string().c_str(),
         GDAL_OF_RASTER | GDAL_OF_READONLY,
         drivers, opts.List(), nullptr)));
@@ -130,12 +95,12 @@ Outcome run_accept(const fs::path& dir, const json& entry)
         return {Outcome::Kind::SKIP, "dtype unavailable in this GDAL build"};
     }
 
-    auto blob = build_blob(path);
-    if (!blob.valid()) {
-        return {Outcome::Kind::FAIL, "shortcog_build_blob returned null"};
+    auto blob = shortcog::build_blob_from_file(path.string().c_str());
+    if (!blob) {
+        return {Outcome::Kind::FAIL, "build_blob_from_file: " + blob.error()};
     }
 
-    auto ds = open_shortcog(path, base64_encode({blob.data, blob.size}));
+    auto ds = open_shortcog(path, base64_encode(*blob));
     if (!ds) {
         return {Outcome::Kind::FAIL, "GDALOpenEx via SHORTCOG returned null"};
     }
@@ -184,11 +149,11 @@ Outcome run_reject(const fs::path& dir, const json& entry)
 
     QuietGdalErrors quiet;
 
-    auto blob = build_blob(path);
-    if (!blob.valid()) {
+    auto blob = shortcog::build_blob_from_file(path.string().c_str());
+    if (!blob) {
         return {Outcome::Kind::PASS, "rejected at build_blob"};
     }
-    auto ds = open_shortcog(path, base64_encode({blob.data, blob.size}));
+    auto ds = open_shortcog(path, base64_encode(*blob));
     if (!ds) {
         return {Outcome::Kind::PASS, "rejected at open"};
     }
@@ -221,8 +186,8 @@ int run(const fs::path& dir)
         return 2;
     }
 
-    // build_blob opens the source COG via GDALOpenEx (GTiff), so the standard
-    // drivers must be registered alongside SHORTCOG.
+    // build_blob_from_file opens the source COG via GDALOpenEx (GTiff), so
+    // the standard drivers must be registered alongside SHORTCOG.
     GDALAllRegister();
     GDALRegister_SHORTCOG();
 

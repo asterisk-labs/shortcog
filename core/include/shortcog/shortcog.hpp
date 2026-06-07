@@ -1,5 +1,7 @@
 #pragma once
 
+#include "shortcog.h"
+
 #include "gdal_priv.h"
 #include "cpl_vsi.h"
 
@@ -13,21 +15,6 @@
 #include <string_view>
 #include <type_traits>
 #include <vector>
-
-// The build hides symbols by default (see CMakeLists.txt). SHORTCOG_API marks
-// the surface that tests and bindings link against. SHORTCOG_BUILD is set only
-// on the targets that compile the library.
-#if defined(_WIN32)
-#  if defined(SHORTCOG_BUILD)
-#    define SHORTCOG_API __declspec(dllexport)
-#  else
-#    define SHORTCOG_API __declspec(dllimport)
-#  endif
-#elif defined(SHORTCOG_BUILD)
-#  define SHORTCOG_API __attribute__((visibility("default")))
-#else
-#  define SHORTCOG_API
-#endif
 
 namespace shortcog {
 
@@ -313,12 +300,3 @@ build_blob_from_file(const char* path) noexcept;
 SHORTCOG_API void register_driver();
 
 }  // namespace shortcog
-
-
-extern "C" {
-    void CPL_DLL GDALRegister_SHORTCOG();
-
-    // Free the buffer with shortcog_free_buffer.
-    unsigned char* CPL_DLL shortcog_build_blob(const char* path, std::size_t* out_size);
-    void           CPL_DLL shortcog_free_buffer(unsigned char* buf);
-}

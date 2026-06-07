@@ -267,33 +267,3 @@ build_blob_from_file(const char* path) noexcept
 }
 
 }  // namespace shortcog
-
-
-extern "C" {
-
-unsigned char* CPL_DLL shortcog_build_blob(const char* path, size_t* out_size)
-{
-    auto result = shortcog::build_blob_from_file(path);
-    if (!result) {
-        CPLError(CE_Failure, CPLE_AppDefined, "shortcog: %s", result.error().c_str());
-        if (out_size) *out_size = 0;
-        return nullptr;
-    }
-    const auto& blob = *result;
-    auto* buf = static_cast<unsigned char*>(std::malloc(blob.size()));
-    if (!buf) {
-        CPLError(CE_Failure, CPLE_OutOfMemory, "shortcog: allocation failed");
-        if (out_size) *out_size = 0;
-        return nullptr;
-    }
-    std::memcpy(buf, blob.data(), blob.size());
-    if (out_size) *out_size = blob.size();
-    return buf;
-}
-
-void CPL_DLL shortcog_free_buffer(unsigned char* buf)
-{
-    std::free(buf);
-}
-
-}  // extern "C"

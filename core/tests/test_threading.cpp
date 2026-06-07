@@ -40,20 +40,6 @@ struct GdalDatasetCloser {
 };
 using DatasetPtr = std::unique_ptr<GDALDataset, GdalDatasetCloser>;
 
-struct BlobOwner {
-    unsigned char* data = nullptr;
-    std::size_t    size = 0;
-
-    BlobOwner() = default;
-    ~BlobOwner() { if (data) shortcog_free_buffer(data); }
-    BlobOwner(const BlobOwner&)            = delete;
-    BlobOwner& operator=(const BlobOwner&) = delete;
-    BlobOwner(BlobOwner&& o) noexcept : data(o.data), size(o.size) {
-        o.data = nullptr; o.size = 0;
-    }
-    [[nodiscard]] bool valid() const noexcept { return data != nullptr; }
-};
-
 std::string to_hex(std::span<const std::uint8_t> bytes)
 {
     static constexpr char hex[] = "0123456789abcdef";
@@ -65,19 +51,13 @@ std::string to_hex(std::span<const std::uint8_t> bytes)
     return s;
 }
 
-std::string base64_encode(std::span<const unsigned char> bytes)
+std::string base64_encode(std::span<const std::byte> bytes)
 {
-    char* b64 = CPLBase64Encode(static_cast<int>(bytes.size()), bytes.data());
+    char* b64 = CPLBase64Encode(static_cast<int>(bytes.size()),
+                                reinterpret_cast<const unsigned char*>(bytes.data()));
     std::string out(b64);
     CPLFree(b64);
     return out;
-}
-
-BlobOwner build_blob(const fs::path& path)
-{
-    BlobOwner b;
-    b.data = shortcog_build_blob(path.string().c_str(), &b.size);
-    return b;
 }
 
 DatasetPtr open_shortcog(const fs::path& path, const std::string& header_b64, int num_threads)
@@ -86,7 +66,7 @@ DatasetPtr open_shortcog(const fs::path& path, const std::string& header_b64, in
     opts.AddNameValue("SHORTCOG_HEADER", header_b64.c_str());
     opts.AddNameValue("NUM_THREADS", std::to_string(num_threads).c_str());
     const char* drivers[] = {"SHORTCOG", nullptr};
-    return DatasetPtr(static_cast<GDALDataset*>(GDALOpenEx(
+    return DatasetPtr(GDALDataset::FromHandle(GDALOpenEx(
         path.string().c_str(),
         GDAL_OF_RASTER | GDAL_OF_READONLY,
         drivers, opts.List(), nullptr)));
@@ -115,12 +95,13 @@ std::array<std::uint8_t, 32> hash_full_image(GDALDataset* ds, const char* tag)
 
 bool test_threaded_open_matches_baseline(const fs::path& path, const std::string& expected_sha)
 {
-    auto blob = build_blob(path);
-    if (!blob.valid()) {
-        std::fprintf(stderr, "build_blob failed for %s\n", path.string().c_str());
+    auto blob = shortcog::build_blob_from_file(path.string().c_str());
+    if (!blob) {
+        std::fprintf(stderr, "build_blob failed for %s: %s\n",
+                     path.string().c_str(), blob.error().c_str());
         return false;
     }
-    auto ds = open_shortcog(path, base64_encode({blob.data, blob.size}), POOL_THREADS);
+    auto ds = open_shortcog(path, base64_encode(*blob), POOL_THREADS);
     if (!ds) {
         std::fprintf(stderr, "open_shortcog (NUM_THREADS=%d) failed\n", POOL_THREADS);
         return false;
@@ -140,15 +121,16 @@ bool test_threaded_open_matches_baseline(const fs::path& path, const std::string
 
 bool test_concurrent_reads(const fs::path& path, const std::string& expected_sha)
 {
-    auto blob = build_blob(path);
-    if (!blob.valid()) {
-        std::fprintf(stderr, "build_blob failed for %s\n", path.string().c_str());
+    auto blob = shortcog::build_blob_from_file(path.string().c_str());
+    if (!blob) {
+        std::fprintf(stderr, "build_blob failed for %s: %s\n",
+                     path.string().c_str(), blob.error().c_str());
         return false;
     }
     // One dataset, hit from N readers at once. They share the VSILFILE
     // (lockless PRead) and Band's block-cache mutex; decompression scratch is
     // thread_local per worker. This is the GDAL_OF_THREAD_SAFE contract.
-    auto ds = open_shortcog(path, base64_encode({blob.data, blob.size}), POOL_THREADS);
+    auto ds = open_shortcog(path, base64_encode(*blob), POOL_THREADS);
     if (!ds) {
         std::fprintf(stderr, "open_shortcog (NUM_THREADS=%d) failed\n", POOL_THREADS);
         return false;
