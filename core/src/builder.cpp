@@ -161,6 +161,8 @@ build_blob_from_file(const char* path) noexcept
 {
     if (!path) return err("path is null");
 
+    GDALAllRegister();
+
     // Profile rules: little-endian byte order and BigTIFF.
     if (auto ok = check_bigtiff_le(path); !ok) {
         return std::unexpected(ok.error());

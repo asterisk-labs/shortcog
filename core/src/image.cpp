@@ -19,102 +19,26 @@ namespace shortcog {
 
 namespace {
 
-TileSpec make_spec(const Header& h) noexcept
-{
-    return TileSpec{
-        h.predictor,
-        h.tile_width,
-        h.tile_length,
-        static_cast<std::uint8_t>(h.bytes_per_sample),
-        h.max_tile_size,
-    };
-}
-
-// One TileTask per intersecting (tile, band). A full, unclipped tile whose
-// output is tile-contiguous decompresses straight into the buffer; everything
-// else lands in per-thread scratch and is copied out, honoring pixel_space.
+// One TileTask per intersecting (tile, band), via the shared planner.
 CPLErr read_native(const Image* img,
                    int x_off, int y_off, int x_size, int y_size,
                    void* data,
                    int band_count, const int* band_map,
                    GSpacing pixel_space, GSpacing line_space, GSpacing band_space)
 {
-    const Header& h = img->header();
-    const int tw  = h.tile_width;
-    const int tl  = h.tile_length;
-    const std::size_t bps = h.bytes_per_sample;
-
-    const int tx_min = x_off / tw;
-    const int ty_min = y_off / tl;
-    const int tx_max = static_cast<int>(
-        (static_cast<std::int64_t>(x_off) + x_size + tw - 1) / tw);
-    const int ty_max = static_cast<int>(
-        (static_cast<std::int64_t>(y_off) + y_size + tl - 1) / tl);
-
-    const bool contiguous_output =
-        pixel_space == static_cast<GSpacing>(bps) &&
-        line_space  == static_cast<GSpacing>(tw) * static_cast<GSpacing>(bps);
-
-    Plan plan;
-    plan.spec = make_spec(h);
-    plan.tasks.reserve(static_cast<std::size_t>(tx_max - tx_min) *
-                       (ty_max - ty_min) * band_count);
-
-    for (int ty = ty_min; ty < ty_max; ++ty) {
-        for (int tx = tx_min; tx < tx_max; ++tx) {
-            const int tile_px = tx * tw;
-            const int tile_py = ty * tl;
-            const int ix0 = std::max(tile_px, x_off);
-            const int iy0 = std::max(tile_py, y_off);
-            const int ix1 = std::min({tile_px + tw, x_off + x_size,
-                                      static_cast<int>(h.image_width)});
-            const int iy1 = std::min({tile_py + tl, y_off + y_size,
-                                      static_cast<int>(h.image_length)});
-            if (ix1 <= ix0 || iy1 <= iy0) continue;
-
-            const bool full_tile =
-                ix0 == tile_px && iy0 == tile_py &&
-                ix1 == tile_px + tw && iy1 == tile_py + tl;
-            const bool direct = full_tile && contiguous_output;
-
-            for (int i = 0; i < band_count; ++i) {
-                const auto band = static_cast<std::uint32_t>(band_map[i] - 1);
-                const std::uint32_t idx = h.tile_index(
-                    static_cast<std::uint32_t>(ty),
-                    static_cast<std::uint32_t>(tx),
-                    band);
-
-                std::byte* dst = static_cast<std::byte*>(data)
-                    + static_cast<GSpacing>(iy0 - y_off) * line_space
-                    + static_cast<GSpacing>(ix0 - x_off) * pixel_space
-                    + static_cast<GSpacing>(i)          * band_space;
-
-                TileTask task{};
-                task.file            = img->file();
-                task.offset          = h.tile_offset(idx);
-                task.compressed_size = h.tile_byte_counts[idx];
-                if (direct) {
-                    task.direct = dst;
-                } else {
-                    task.dst              = dst;
-                    task.src_x            = static_cast<std::uint32_t>(ix0 - tile_px);
-                    task.src_y            = static_cast<std::uint32_t>(iy0 - tile_py);
-                    task.w                = static_cast<std::uint32_t>(ix1 - ix0);
-                    task.h                = static_cast<std::uint32_t>(iy1 - iy0);
-                    task.dst_pitch        = static_cast<std::size_t>(line_space);
-                    task.dst_pixel_stride = static_cast<std::size_t>(pixel_space);
-                }
-                plan.tasks.push_back(task);
-            }
-        }
-    }
+    Plan plan = build_plan(img->header(), img->file(),
+                           x_off, y_off, x_size, y_size,
+                           static_cast<std::byte*>(data),
+                           std::span<const int>(band_map,
+                               static_cast<std::size_t>(band_count)),
+                           pixel_space, line_space, band_space);
 
     Executor exec(img->pool());
     return exec.run(plan) ? CE_None : CE_Failure;
 }
 
-// Catch-all: read a tile-aligned native-resolution superset into a
-// MEMDataset and let GDAL handle resampling and type conversion.
+// Read a tile-aligned native superset into a MEMDataset and let GDAL do the
+// resampling and type conversion.
 CPLErr read_via_mem(const Image* img,
                     int x_off, int y_off, int x_size, int y_size,
                     void* data, int buf_x_size, int buf_y_size,
@@ -128,8 +52,8 @@ CPLErr read_via_mem(const Image* img,
     const int tl = h.tile_length;
     const std::size_t bps = h.bytes_per_sample;
 
-    // The tile-rounded end can exceed int range, so take the min in int64 first.
-    // image_width and image_length fit int, so the result does too.
+    // The tile-rounded end can blow past int range, so clamp in int64 first.
+    // image_width and image_length fit int, so the clamped result does too.
     const int ax_off = (x_off / tw) * tw;
     const int ay_off = (y_off / tl) * tl;
     const int ax_end = static_cast<int>(std::min<std::int64_t>(h.image_width,
@@ -234,7 +158,7 @@ CPLErr Band::IReadBlock(int x_block, int y_block, void* buffer)
         static_cast<std::uint32_t>(nBand - 1));
 
     Plan plan;
-    plan.spec = make_spec(h);
+    plan.spec = make_tile_spec(h);
 
     TileTask task{};
     task.file            = image_->file();
@@ -305,10 +229,10 @@ GDALDataset* Image::Open(GDALOpenInfo* open_info)
         return nullptr;
     }
 
-    // The parser guarantees samples_per_pixel != 0 and fits uint16, but a band
-    // count GDAL considers unreasonable (env GDAL_MAX_BAND_COUNT) would still
-    // drive the SetBand loop into a huge allocation. Reject it the same way
-    // the in-tree drivers do, before opening the file.
+    // parse_blob already guarantees samples_per_pixel is nonzero and fits
+    // uint16, but a count GDAL deems unreasonable (GDAL_MAX_BAND_COUNT) would
+    // still drive the SetBand loop into a huge allocation, so reject it like
+    // the in-tree drivers do before touching the file.
     if (!GDALCheckBandCount(parsed->samples_per_pixel, FALSE)) {
         CPLError(CE_Failure, CPLE_AppDefined,
                  "SHORTCOG: unreasonable band count %u",
@@ -323,8 +247,8 @@ GDALDataset* Image::Open(GDALOpenInfo* open_info)
         return nullptr;
     }
 
-    // PRead is mandatory: we declare GDAL_OF_THREAD_SAFE and the parallel
-    // path holds no file lock.
+    // PRead is mandatory because we advertise GDAL_OF_THREAD_SAFE and the
+    // parallel path takes no file lock.
     if (!fp->HasPRead()) {
         VSIFCloseL(fp);
         CPLError(CE_Failure, CPLE_NotSupported,
@@ -346,9 +270,9 @@ GDALDataset* Image::Open(GDALOpenInfo* open_info)
     }
     img->SetDescription(open_info->pszFilename);
 
-    // NUM_THREADS: an integer, or ALL_CPUS. Absent means single-threaded. The
-    // pool is process-global and sized on first use, so the first dataset that
-    // enables threading fixes the worker count for every dataset after it.
+    // NUM_THREADS is an integer or ALL_CPUS, absent meaning single-threaded.
+    // The pool is process-global and sized on first use, so whichever dataset
+    // first enables threading fixes the worker count for every one after it.
     int n_threads = 1;
     if (const char* nt = CSLFetchNameValue(open_info->papszOpenOptions,
                                            OPEN_OPTION_THREADS)) {
@@ -382,8 +306,8 @@ CPLErr Image::IRasterIO(GDALRWFlag rw_flag, int x_off, int y_off,
         return CE_Failure;
     }
 
-    // GDAL's public RasterIO validates the window and band numbers, but
-    // ImageCube reads call us directly, so the same checks live here.
+    // GDAL's public RasterIO already validates the window and bands, but
+    // ImageCube reads reach us directly, so the same checks are repeated here.
     if (x_off < 0 || y_off < 0 || x_size <= 0 || y_size <= 0 ||
         static_cast<std::int64_t>(x_off) + x_size > nRasterXSize ||
         static_cast<std::int64_t>(y_off) + y_size > nRasterYSize) {
@@ -405,7 +329,7 @@ CPLErr Image::IRasterIO(GDALRWFlag rw_flag, int x_off, int y_off,
     if (!extra_arg) extra_arg = &default_arg;
 
     // read_native handles any pixel/line/band spacing, so only resampling or a
-    // dtype change forces the staging path.
+    // dtype change needs the staging path.
     const bool fast_path =
         x_size == buf_x_size && y_size == buf_y_size &&
         buf_type == header_.gdal_type;
@@ -421,27 +345,6 @@ CPLErr Image::IRasterIO(GDALRWFlag rw_flag, int x_off, int y_off,
                        band_count, band_map,
                        pixel_space, line_space, band_space);
 }
-
-bool Image::read(std::span<const int> bands,
-                 int y_off, int y_size, int x_off, int x_size,
-                 const LayoutPlan& layout, std::byte* dst)
-{
-    const std::size_t bps = header_.bytes_per_sample;
-
-    GDALRasterIOExtraArg extra;
-    INIT_RASTERIO_EXTRA_ARG(extra);
-
-    return IRasterIO(
-        GF_Read, x_off, y_off, x_size, y_size, dst, x_size, y_size,
-        header_.gdal_type,
-        static_cast<int>(bands.size()),
-        const_cast<int*>(bands.data()),
-        static_cast<GSpacing>(layout.sx) * bps,
-        static_cast<GSpacing>(layout.sy) * bps,
-        static_cast<GSpacing>(layout.sb) * bps,
-        &extra) == CE_None;
-}
-
 
 // Driver registration
 

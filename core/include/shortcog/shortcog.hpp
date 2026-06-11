@@ -157,14 +157,24 @@ private:
     ThreadPool* pool_;
 };
 
+[[nodiscard]] SHORTCOG_API TileSpec make_tile_spec(const Header& h) noexcept;
+
+// Maps a window/band/stride request onto TileTasks. Callers validate the
+// window and band indices (1-based) beforehand.
+[[nodiscard]] SHORTCOG_API Plan
+build_plan(const Header& h, VSILFILE* file,
+           int x_off, int y_off, int x_size, int y_size,
+           std::byte* data,
+           std::span<const int> bands,
+           GSpacing pixel_space, GSpacing line_space, GSpacing band_space);
+
 
 // Layout
 
 // Output placement from compile_layout. sn/sb/sy/sx are per-axis element
 // strides, scaled by bytes_per_sample at read time. native means the block is
 // already plain (n, b, y, x) C-contiguous so a binding adopts it without a
-// copy. It does not select the direct-decompress path; read_native decides that
-// from contiguous_output.
+// copy.
 struct LayoutPlan {
     std::vector<std::int64_t> shape;
     std::int64_t              sn{};
@@ -183,7 +193,31 @@ compile_layout(std::string_view pattern,
                std::int64_t y, std::int64_t x);
 
 
-// Image
+// Stateless read
+
+// Opens path via VSI, plans the window, runs it, closes. bands are 1-based.
+// num_threads > 1 uses the process-global pool (sized on first use).
+[[nodiscard]] SHORTCOG_API std::expected<void, std::string>
+read_window(const char* path, const Header& h,
+            std::span<const int> bands,
+            int y_off, int y_size, int x_off, int x_size,
+            const LayoutPlan& layout, std::byte* dst,
+            int num_threads);
+
+// Validates that every header shares grid, tile size, band count, dtype and
+// predictor, then reads each selected asset (n_index, 1-based) into its
+// layout.sn slice of dst.
+[[nodiscard]] SHORTCOG_API std::expected<void, std::string>
+read_stack(std::span<const char* const> paths,
+           std::span<const Header* const> headers,
+           std::span<const int> n_index,
+           std::span<const int> bands,
+           int y_off, int y_size, int x_off, int x_size,
+           const LayoutPlan& layout, std::byte* dst,
+           int num_threads);
+
+
+// Image (GDAL driver only; the native fast path is read_window/read_stack)
 
 class Image;
 
@@ -243,51 +277,10 @@ public:
     [[nodiscard]] VSILFILE*     file()   const noexcept { return file_.get(); }
     [[nodiscard]] ThreadPool*   pool()   const noexcept { return pool_; }
 
-    // Reads into dst with the layout b/y/x strides. sn is ignored, that is
-    // ImageCube's job. IRasterIO clips and validates the window.
-    [[nodiscard]] bool read(std::span<const int> bands,
-                            int y_off, int y_size,
-                            int x_off, int x_size,
-                            const LayoutPlan& layout,
-                            std::byte* dst);
-
 private:
     Header                    header_{};
     std::shared_ptr<VSILFILE> file_;
     ThreadPool*               pool_{nullptr};
-};
-
-
-// ImageCube
-
-class SHORTCOG_API ImageCube {
-public:
-    // Fails unless every image shares grid, tile size, band count, dtype and
-    // predictor. Mismatched inputs are an error, there is no ragged form.
-    [[nodiscard]] static std::expected<ImageCube, std::string>
-    create(std::vector<std::shared_ptr<Image>> images);
-
-    ImageCube(const ImageCube&)                = delete;
-    ImageCube& operator=(const ImageCube&)     = delete;
-    ImageCube(ImageCube&&) noexcept            = default;
-    ImageCube& operator=(ImageCube&&) noexcept = default;
-
-    [[nodiscard]] std::size_t   size() const noexcept;
-    [[nodiscard]] const Header& spec() const noexcept;
-
-    // n_index and bands are 1-based and ordered, the window is clipped to the
-    // shared extent, and layout places each axis in dst.
-    [[nodiscard]] bool read(std::span<const int> n_index,
-                            std::span<const int> bands,
-                            int y_off, int y_size,
-                            int x_off, int x_size,
-                            const LayoutPlan& layout,
-                            std::byte* dst) const;
-
-private:
-    explicit ImageCube(std::vector<std::shared_ptr<Image>> images) noexcept;
-
-    std::vector<std::shared_ptr<Image>> images_;
 };
 
 

@@ -1,4 +1,4 @@
-"""shortcog — a COG profile for AI training data."""
+"""shortcog, a COG profile for AI training data."""
 
 import os
 
@@ -7,7 +7,7 @@ import numpy as np
 from ._ffi import ffi, lib, _check
 
 
-__all__ = ["index_file", "open", "Image", "Cube", "__version__"]
+__all__ = ["index_file", "parse", "read", "Spec", "__version__"]
 
 __version__ = ffi.string(lib.shortcog_version_string()).decode("ascii")
 
@@ -46,7 +46,7 @@ def _enc(path):
 
 # Tuple selectors are Python slices (start, stop), 0-based. Lists are 0-based
 # explicit indices in the order requested. Both convert to 1-based for the C
-# API. None means "all" and gets passed through as NULL/0.
+# API. None means all and gets passed through as NULL/0.
 def _resolve_axis(sel, name, total):
     if sel is None:
         return None
@@ -93,43 +93,34 @@ def index_file(path):
         lib.shortcog_free(blob_out[0])
 
 
-class Image:
-    def __init__(self, path, blob, *, num_threads=1):
+class Spec:
+    """Parsed header blob. Pure memory, no file handle, reusable across reads."""
+
+    def __init__(self, blob):
         self._handle = None
         if not isinstance(blob, (bytes, bytearray, memoryview)):
             raise TypeError(f"blob must be bytes-like, got {type(blob).__name__}")
 
         blob_buf = ffi.from_buffer("unsigned char[]", blob)
-        handle_out = ffi.new("shortcog_image**")
-        _check(lib.shortcog_image_open(
-            _enc(path), blob_buf, len(blob), num_threads, handle_out
-        ))
+        handle_out = ffi.new("shortcog_spec**")
+        _check(lib.shortcog_spec_parse(blob_buf, len(blob), handle_out))
         handle = handle_out[0]
 
         try:
             header = ffi.new("shortcog_header*")
-            _check(lib.shortcog_image_header(handle, header))
+            _check(lib.shortcog_spec_header(handle, header))
             self._dtype = _np_dtype(header.sample_format, header.bits_per_sample)
         except BaseException:
-            lib.shortcog_image_close(handle)
+            lib.shortcog_spec_destroy(handle)
             raise
 
         self._handle = handle
         self._header = header
 
-    def close(self):
-        if self._handle:
-            lib.shortcog_image_close(self._handle)
-            self._handle = None
-
     def __del__(self):
-        self.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
+        if self._handle:
+            lib.shortcog_spec_destroy(self._handle)
+            self._handle = None
 
     @property
     def shape(self):
@@ -142,121 +133,91 @@ class Image:
 
     def __repr__(self):
         h = self._header
-        return (f"<shortcog.Image {h.image_width}x{h.image_length} "
+        return (f"<shortcog.Spec {h.image_width}x{h.image_length} "
                 f"bands={h.samples_per_pixel} dtype={self._dtype.__name__}>")
 
-    def read(self, pattern="b y x", *, b=None, y=None, x=None):
-        h = self._header
-        bands = _resolve_axis(b, "b", h.samples_per_pixel)
-        y_off, y_size = _resolve_window(y, "y", h.image_length)
-        x_off, x_size = _resolve_window(x, "x", h.image_width)
 
-        n_bands = len(bands) if bands is not None else h.samples_per_pixel
-        layout = ffi.new("shortcog_layout*")
-        _check(lib.shortcog_compile_layout(
-            pattern.encode("ascii"), 1, n_bands, y_size, x_size, layout
-        ))
-        shape = tuple(layout.shape[i] for i in range(layout.ndim))
-        arr = np.empty(shape, dtype=self._dtype)
-
-        bands_c, n_bands_c = _to_c(bands)
-        _check(lib.shortcog_image_read(
-            self._handle, bands_c, n_bands_c,
-            y_off, y_size, x_off, x_size,
-            pattern.encode("ascii"),
-            ffi.cast("void*", arr.ctypes.data), arr.nbytes,
-        ))
-        return arr
+def parse(blob):
+    return Spec(blob)
 
 
-class Cube:
-    def __init__(self, images):
-        self._handle = None
-        if not images:
-            raise ValueError("Cube requires at least one image")
-        self._images = list(images)
+def _read_one(path, spec, pattern, b, y, x, num_threads):
+    h = spec._header
+    bands = _resolve_axis(b, "b", h.samples_per_pixel)
+    y_off, y_size = _resolve_window(y, "y", h.image_length)
+    x_off, x_size = _resolve_window(x, "x", h.image_width)
 
-        handles = ffi.new(f"shortcog_image*[{len(self._images)}]")
-        for i, img in enumerate(self._images):
-            if img._handle is None:
-                raise ValueError(f"image at index {i} is closed")
-            handles[i] = img._handle
+    n_bands = len(bands) if bands is not None else h.samples_per_pixel
+    if pattern is None:
+        pattern = "b y x"
 
-        cube_out = ffi.new("shortcog_cube**")
-        _check(lib.shortcog_cube_create(handles, len(self._images), cube_out))
+    layout = ffi.new("shortcog_layout*")
+    _check(lib.shortcog_compile_layout(
+        pattern.encode("ascii"), 1, n_bands, y_size, x_size, layout
+    ))
+    shape = tuple(layout.shape[i] for i in range(layout.ndim))
+    arr = np.empty(shape, dtype=spec._dtype)
 
-        self._handle = cube_out[0]
-        self._header = self._images[0]._header
-        self._dtype = self._images[0]._dtype
-
-    def close(self):
-        if self._handle:
-            lib.shortcog_cube_destroy(self._handle)
-            self._handle = None
-
-    def __del__(self):
-        self.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-
-    @property
-    def shape(self):
-        h = self._header
-        return (len(self._images), h.samples_per_pixel, h.image_length, h.image_width)
-
-    @property
-    def dtype(self):
-        return self._dtype
-
-    def __repr__(self):
-        h = self._header
-        return (f"<shortcog.Cube n={len(self._images)} "
-                f"{h.image_width}x{h.image_length} bands={h.samples_per_pixel} "
-                f"dtype={self._dtype.__name__}>")
-
-    def read(self, pattern=None, *, n=None, b=None, y=None, x=None):
-        h = self._header
-        n_sel = _resolve_axis(n, "n", len(self._images))
-        bands = _resolve_axis(b, "b", h.samples_per_pixel)
-        y_off, y_size = _resolve_window(y, "y", h.image_length)
-        x_off, x_size = _resolve_window(x, "x", h.image_width)
-
-        n_count = len(n_sel) if n_sel is not None else len(self._images)
-        n_bands = len(bands) if bands is not None else h.samples_per_pixel
-        if pattern is None:
-            pattern = "n b y x" if n_count > 1 else "b y x"
-
-        layout = ffi.new("shortcog_layout*")
-        _check(lib.shortcog_compile_layout(
-            pattern.encode("ascii"), n_count, n_bands, y_size, x_size, layout
-        ))
-        shape = tuple(layout.shape[i] for i in range(layout.ndim))
-        arr = np.empty(shape, dtype=self._dtype)
-
-        n_c, n_count_c = _to_c(n_sel)
-        bands_c, n_bands_c = _to_c(bands)
-        _check(lib.shortcog_cube_read(
-            self._handle, n_c, n_count_c, bands_c, n_bands_c,
-            y_off, y_size, x_off, x_size,
-            pattern.encode("ascii"),
-            ffi.cast("void*", arr.ctypes.data), arr.nbytes,
-        ))
-        return arr
+    bands_c, n_bands_c = _to_c(bands)
+    _check(lib.shortcog_read(
+        _enc(path), spec._handle, bands_c, n_bands_c,
+        y_off, y_size, x_off, x_size,
+        pattern.encode("ascii"), num_threads,
+        ffi.cast("void*", arr.ctypes.data), arr.nbytes,
+    ))
+    return arr
 
 
-# Polymorphic: single path/blob -> Image, lists -> Cube.
-def open(paths, blobs, *, num_threads=1):
-    if isinstance(paths, (str, bytes, os.PathLike)):
-        return Image(paths, blobs, num_threads=num_threads)
-
+def _read_stack(paths, specs, pattern, n, b, y, x, num_threads):
     paths = list(paths)
-    blobs = list(blobs)
-    if len(paths) != len(blobs):
+    specs = list(specs)
+    if len(paths) != len(specs):
         raise ValueError(
-            f"paths and blobs length mismatch: {len(paths)} vs {len(blobs)}"
+            f"paths and specs length mismatch: {len(paths)} vs {len(specs)}"
         )
-    return Cube([Image(p, b, num_threads=num_threads) for p, b in zip(paths, blobs)])
+    if not paths:
+        raise ValueError("read requires at least one image")
+
+    h = specs[0]._header
+    n_sel = _resolve_axis(n, "n", len(specs))
+    bands = _resolve_axis(b, "b", h.samples_per_pixel)
+    y_off, y_size = _resolve_window(y, "y", h.image_length)
+    x_off, x_size = _resolve_window(x, "x", h.image_width)
+
+    n_count = len(n_sel) if n_sel is not None else len(specs)
+    n_bands = len(bands) if bands is not None else h.samples_per_pixel
+    if pattern is None:
+        pattern = "n b y x" if n_count > 1 else "b y x"
+
+    layout = ffi.new("shortcog_layout*")
+    _check(lib.shortcog_compile_layout(
+        pattern.encode("ascii"), n_count, n_bands, y_size, x_size, layout
+    ))
+    shape = tuple(layout.shape[i] for i in range(layout.ndim))
+    arr = np.empty(shape, dtype=specs[0]._dtype)
+
+    paths_c = [ffi.new("char[]", _enc(p)) for p in paths]
+    paths_arr = ffi.new("char*[]", paths_c)
+    specs_arr = ffi.new("shortcog_spec*[]", [s._handle for s in specs])
+
+    n_c, n_count_c = _to_c(n_sel)
+    bands_c, n_bands_c = _to_c(bands)
+    _check(lib.shortcog_read_stack(
+        paths_arr, specs_arr, len(specs),
+        n_c, n_count_c, bands_c, n_bands_c,
+        y_off, y_size, x_off, x_size,
+        pattern.encode("ascii"), num_threads,
+        ffi.cast("void*", arr.ctypes.data), arr.nbytes,
+    ))
+    return arr
+
+
+# Polymorphic and stateless. A single path/spec reads one image, lists read a
+# stack. Opens, reads, closes, with nothing kept alive between calls.
+def read(paths, specs, pattern=None, *, n=None, b=None, y=None, x=None,
+         num_threads=1):
+    if isinstance(paths, (str, bytes, os.PathLike)):
+        if n is not None:
+            raise ValueError("n applies to a stack; pass lists of paths/specs")
+        return _read_one(paths, specs, pattern, b, y, x, num_threads)
+    return _read_stack(paths, specs, pattern, n, b, y, x, num_threads)

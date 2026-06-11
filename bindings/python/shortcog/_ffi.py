@@ -7,7 +7,7 @@ from pathlib import Path
 from cffi import FFI
 
 
-# Mirrors the public surface of shortcog.h; update both files together.
+# Mirrors the subset of shortcog.h this binding uses; update together.
 _CDEF = """
 typedef enum {
     SHORTCOG_OK              = 0,
@@ -46,8 +46,7 @@ typedef struct {
     int     native;
 } shortcog_layout;
 
-typedef struct shortcog_image shortcog_image;
-typedef struct shortcog_cube  shortcog_cube;
+typedef struct shortcog_spec shortcog_spec;
 
 int         shortcog_api_version(void);
 const char* shortcog_version_string(void);
@@ -64,43 +63,29 @@ shortcog_compile_layout(const char* pattern,
                         shortcog_layout* out);
 
 shortcog_status
-shortcog_image_open(const char* path,
-                    const unsigned char* blob, size_t blob_size,
-                    int num_threads,
-                    shortcog_image** out);
+shortcog_spec_parse(const unsigned char* blob, size_t blob_size,
+                    shortcog_spec** out);
 
-void shortcog_image_close(shortcog_image* image);
+void shortcog_spec_destroy(shortcog_spec* spec);
 
 shortcog_status
-shortcog_image_header(const shortcog_image* image, shortcog_header* out);
+shortcog_spec_header(const shortcog_spec* spec, shortcog_header* out);
 
 shortcog_status
-shortcog_image_read(shortcog_image* image,
+shortcog_read(const char* path, const shortcog_spec* spec,
+              const int* bands, size_t n_bands,
+              int y_off, int y_size, int x_off, int x_size,
+              const char* pattern, int num_threads,
+              void* dst, size_t dst_size);
+
+shortcog_status
+shortcog_read_stack(const char* const* paths,
+                    const shortcog_spec* const* specs, size_t n_images,
+                    const int* n_index, size_t n_n,
                     const int* bands, size_t n_bands,
                     int y_off, int y_size, int x_off, int x_size,
-                    const char* pattern,
+                    const char* pattern, int num_threads,
                     void* dst, size_t dst_size);
-
-shortcog_status
-shortcog_cube_create(shortcog_image** images, size_t n_images,
-                     shortcog_cube** out);
-
-void shortcog_cube_destroy(shortcog_cube* cube);
-
-shortcog_status
-shortcog_cube_header(const shortcog_cube* cube,
-                     shortcog_header* out,
-                     size_t* out_n_images);
-
-shortcog_status
-shortcog_cube_read(shortcog_cube* cube,
-                   const int* n_index, size_t n_n,
-                   const int* bands,   size_t n_bands,
-                   int y_off, int y_size, int x_off, int x_size,
-                   const char* pattern,
-                   void* dst, size_t dst_size);
-
-void GDALRegister_SHORTCOG(void);
 """
 
 

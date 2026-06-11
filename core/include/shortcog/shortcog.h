@@ -8,8 +8,9 @@
 extern "C" {
 #endif
 
-// The build hides symbols by default; SHORTCOG_API marks the C ABI surface.
-// SHORTCOG_BUILD is defined only on the targets that compile the library.
+// The build hides symbols by default and SHORTCOG_API marks the C ABI
+// surface. SHORTCOG_BUILD is defined only on the targets that compile the
+// library.
 #if defined(_WIN32)
 #  if defined(SHORTCOG_BUILD)
 #    define SHORTCOG_API __declspec(dllexport)
@@ -55,7 +56,7 @@ SHORTCOG_API void shortcog_clear_error(void);
 // Memory.
 
 // Releases buffers the library allocated. Only shortcog_index_file
-// allocates; everything else is caller-owned.
+// allocates, everything else is caller-owned.
 SHORTCOG_API void shortcog_free(void* ptr);
 
 
@@ -91,9 +92,9 @@ typedef struct {
 
 // Layout.
 
-// shape[0..ndim) is populated, the rest is zero. sn/sb/sy/sx are
-// element strides; multiply by bytes_per_sample for bytes. native is 1
-// when the output order is canonical (n) b y x.
+// shape[0..ndim) is populated, the rest is zero. sn/sb/sy/sx are element
+// strides, multiply by bytes_per_sample for bytes. native is 1 when the
+// output order is canonical (n) b y x.
 typedef struct {
     int64_t shape[4];
     int     ndim;
@@ -112,65 +113,52 @@ shortcog_compile_layout(const char*      pattern,
                         shortcog_layout* out);
 
 
-// Image.
+// Spec.
 
-typedef struct shortcog_image shortcog_image;
-
-// The decompression pool is process-global and sized on first use, so
-// the first open that asks for > 1 thread fixes the worker count for
-// every later open.
-SHORTCOG_API shortcog_status
-shortcog_image_open(const char*          path,
-                    const unsigned char* blob, size_t blob_size,
-                    int                  num_threads,
-                    shortcog_image**     out);
-
-SHORTCOG_API void shortcog_image_close(shortcog_image* image);
+// A parsed header blob. Pure memory, no file handle, cheap to create and
+// destroy, reusable across any number of reads.
+typedef struct shortcog_spec shortcog_spec;
 
 SHORTCOG_API shortcog_status
-shortcog_image_header(const shortcog_image* image, shortcog_header* out);
+shortcog_spec_parse(const unsigned char* blob, size_t blob_size,
+                    shortcog_spec** out);
 
-// bands holds 1-based indices in output order; NULL with n_bands = 0
-// means all bands in file order. pattern NULL is shorthand for "b y x".
-// dst_size is checked up front; an undersized buffer returns
-// SHORTCOG_ERR_INVALID and writes nothing.
-SHORTCOG_API shortcog_status
-shortcog_image_read(shortcog_image* image,
-                    const int*      bands, size_t n_bands,
-                    int             y_off, int y_size,
-                    int             x_off, int x_size,
-                    const char*     pattern,
-                    void*           dst,   size_t dst_size);
-
-
-// Cube.
-
-typedef struct shortcog_cube shortcog_cube;
-
-// Borrows the images; the caller must keep them open for the cube's
-// lifetime. Validates that every image shares grid, tile size, band
-// count, dtype and predictor.
-SHORTCOG_API shortcog_status
-shortcog_cube_create(shortcog_image** images, size_t n_images,
-                     shortcog_cube**  out);
-
-SHORTCOG_API void shortcog_cube_destroy(shortcog_cube* cube);
+SHORTCOG_API void shortcog_spec_destroy(shortcog_spec* spec);
 
 SHORTCOG_API shortcog_status
-shortcog_cube_header(const shortcog_cube* cube,
-                     shortcog_header*     out,
-                     size_t*              out_n_images);
+shortcog_spec_header(const shortcog_spec* spec, shortcog_header* out);
 
-// n_index NULL with n_n = 0 means "all images in create order". The
-// pattern must contain n when more than one image is selected.
+
+// Stateless read.
+
+// Opens path, reads the window, closes. path is a VSI path. bands holds
+// 1-based indices in output order, NULL with n_bands = 0 means all bands in
+// file order. pattern NULL is shorthand for "b y x". dst_size is checked up
+// front. num_threads > 1 uses the process-global pool (sized on first use).
 SHORTCOG_API shortcog_status
-shortcog_cube_read(shortcog_cube* cube,
-                   const int*     n_index, size_t n_n,
-                   const int*     bands,   size_t n_bands,
-                   int            y_off, int y_size,
-                   int            x_off, int x_size,
-                   const char*    pattern,
-                   void*          dst,   size_t dst_size);
+shortcog_read(const char*          path,
+              const shortcog_spec* spec,
+              const int*           bands, size_t n_bands,
+              int                  y_off, int y_size,
+              int                  x_off, int x_size,
+              const char*          pattern,
+              int                  num_threads,
+              void*                dst,   size_t dst_size);
+
+// Stack form. One path+spec per image, all sharing grid, tile size, band
+// count, dtype and predictor. n_index holds 1-based image indices, NULL with
+// n_n = 0 means all images in order. The pattern must contain n when more
+// than one image is selected.
+SHORTCOG_API shortcog_status
+shortcog_read_stack(const char* const*          paths,
+                    const shortcog_spec* const* specs,  size_t n_images,
+                    const int*                  n_index, size_t n_n,
+                    const int*                  bands,   size_t n_bands,
+                    int                         y_off, int y_size,
+                    int                         x_off, int x_size,
+                    const char*                 pattern,
+                    int                         num_threads,
+                    void*                       dst,   size_t dst_size);
 
 
 // GDAL driver.

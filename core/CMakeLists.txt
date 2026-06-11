@@ -65,9 +65,9 @@ set(SHORTCOG_SOURCES
     src/builder.cpp
     src/predictor.cpp
     src/plan.cpp
+    src/read.cpp
     src/pattern.cpp
     src/image.cpp
-    src/imagecube.cpp
     src/capi.cpp
 )
 
