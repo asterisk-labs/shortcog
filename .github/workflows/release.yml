@@ -1,0 +1,266 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: v
+        name: Tag must equal VERSION
+        run: |
+          VERSION_FILE=$(tr -d '[:space:]' < VERSION)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            if [ "$VERSION_FILE" != "$TAG_VERSION" ]; then
+              echo "::error::Tag v$TAG_VERSION does not match VERSION ($VERSION_FILE)"
+              exit 1
+            fi
+            echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$VERSION_FILE" >> "$GITHUB_OUTPUT"
+          fi
+
+
+  gen-fixtures:
+    name: Generate fixture corpus
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: gen
+          create-args: >-
+            python=3.12
+            gdal=3.12
+            numpy
+            pydantic
+
+      - name: Generate corpus
+        shell: bash -el {0}
+        run: make fixtures
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fixtures
+          path: core/tests/fixtures/data/
+          if-no-files-found: error
+
+
+  build-lib:
+    name: libshortcog (${{ matrix.name }})
+    needs: [validate, gen-fixtures]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - name: macos-arm64
+            runner: macos-14
+          - name: windows-x86_64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: >-
+            python=3.12
+            gdal=3.12
+            zstd
+            cmake
+            ninja
+            cxx-compiler
+            make
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixtures
+          path: core/tests/fixtures/data/
+
+      - name: Build lib and run C++ tests
+        shell: bash -el {0}
+        run: |
+          make lib
+          KEEP_FIXTURES=1 make test
+
+      - name: Stage lib for artifact
+        shell: bash -el {0}
+        run: make stage-lib STAGE_DIR=staged
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libshortcog-${{ matrix.name }}
+          path: staged/
+          if-no-files-found: error
+
+
+  build-wheel:
+    name: Wheel (${{ matrix.name }})
+    needs: [validate, build-lib, gen-fixtures]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            plat_tag: manylinux_2_28_x86_64
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            plat_tag: manylinux_2_28_aarch64
+          - name: macos-arm64
+            runner: macos-14
+            plat_tag: macosx_14_0_arm64
+          - name: windows-x86_64
+            runner: windows-2022
+            plat_tag: win_amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: python -m pip install --upgrade pip build hatchling cffi wheel
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libshortcog-${{ matrix.name }}
+          path: lib-bin/
+
+      - name: Bundle native lib
+        shell: bash
+        run: |
+          mkdir -p bindings/python/shortcog/_lib
+          cp -a lib-bin/* bindings/python/shortcog/_lib/
+
+      - name: Build wheel
+        working-directory: bindings/python
+        run: python -m build --wheel --outdir ../../wheelhouse-raw
+
+      - name: Retag wheel
+        shell: bash
+        run: |
+          mkdir -p wheelhouse
+          for whl in wheelhouse-raw/*.whl; do
+            python -m wheel tags \
+              --python-tag py3 --abi-tag none \
+              --platform-tag ${{ matrix.plat_tag }} \
+              --remove "$whl"
+          done
+          mv wheelhouse-raw/*.whl wheelhouse/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixtures
+          path: bindings/python/tests/fixtures/
+
+      - name: Install and test
+        shell: bash
+        run: |
+          python -m pip install wheelhouse/*.whl
+          python -m pip install "rasterio>=1.5,<2" pytest
+          python -c "import shortcog; print('shortcog', shortcog.__version__)"
+          if [ -d bindings/python/tests ]; then
+            python -m pytest bindings/python/tests -q
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+
+  build-sdist:
+    name: sdist
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - working-directory: bindings/python
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist --outdir ../../sdist-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: sdist-out/*.tar.gz
+          if-no-files-found: error
+
+
+  gh-release:
+    name: GitHub Release
+    needs: [validate, build-lib, build-wheel, build-sdist]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: libshortcog-*
+          path: artifacts/
+
+      - name: Re-pack into versioned archives
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate.outputs.version }}"
+          mkdir -p release-files
+          for plat_dir in artifacts/libshortcog-*; do
+            plat=$(basename "$plat_dir" | sed 's/^libshortcog-//')
+            pkg="libshortcog-${VERSION}-${plat}"
+            (cd "$plat_dir" && tar czf "$OLDPWD/release-files/${pkg}.tar.gz" .)
+          done
+          ls -1 release-files/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-files/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build-wheel, build-sdist]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheel-*
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - run: ls -la dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

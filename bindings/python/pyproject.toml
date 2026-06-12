@@ -9,16 +9,18 @@ dynamic         = ["version"]
 description     = "A COG profile for AI training data."
 readme          = "README.md"
 license         = { text = "MIT" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 authors = [
     { name = "Cesar Aybar",     email = "cesar@asterisk.coop" },
-    { name = "Julio Contreras", email = "julio.contreras@uv.es" },
 ]
 
 dependencies = [
     "numpy>=1.24",
     "cffi>=1.17",
+    # Provides the bundled libgdal our native lib links against. The minor
+    # must match the GDAL we build against, so cap below the next major.
+    "rasterio>=1.5,<2",
 ]
 
 classifiers = [
@@ -31,7 +33,6 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: C++",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: GIS",
@@ -41,7 +42,6 @@ classifiers = [
 [project.optional-dependencies]
 test = [
     "pytest>=7",
-    "rasterio>=1.3",
 ]
 
 [project.urls]
@@ -87,7 +87,7 @@ addopts   = "-ra --strict-markers"
 
 [tool.ruff]
 line-length    = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "NPY"]

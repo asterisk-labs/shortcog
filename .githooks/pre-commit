@@ -1,0 +1,17 @@
+set -euo pipefail
+
+git diff --cached --name-only | grep -qx 'VERSION' || exit 0
+
+root=$(git rev-parse --show-toplevel)
+version=$(tr -d '[:space:]' < "$root/VERSION")
+
+if [[ -z $version ]]; then
+    echo "VERSION is empty" >&2
+    exit 1
+fi
+
+# X.Y.Z with an optional -prerelease suffix.
+if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+    echo "VERSION '$version' is not X.Y.Z[-prerelease]" >&2
+    exit 1
+fi

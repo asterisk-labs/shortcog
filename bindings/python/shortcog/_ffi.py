@@ -100,6 +100,17 @@ def _bundled_lib():
     return None
 
 
+def _preload_gdal():
+    # libshortcog links GDAL at runtime. Importing rasterio pulls the libgdal
+    # bundled in its wheel into the process, so our dlopen resolves GDAL
+    # symbols against it. A system GDAL on the loader path works too, so this
+    # is best-effort.
+    try:
+        import rasterio  # noqa: F401
+    except ImportError:
+        pass
+
+
 def _load_lib():
     # SHORTCOG_LIB beats everything, then the bundled wheel copy, then the OS path.
     env_path = os.environ.get("SHORTCOG_LIB")
@@ -108,12 +119,14 @@ def _load_lib():
         raise OSError(
             "libshortcog not found. Install it or set SHORTCOG_LIB to its path."
         )
+    _preload_gdal()
     try:
         return ffi.dlopen(candidate)
     except OSError as exc:
         raise OSError(
             f"failed to load libshortcog from {candidate!r}: {exc}. "
-            "It links GDAL; make sure a compatible libgdal is on the loader path."
+            "It links GDAL; install rasterio (pip install rasterio) or put a "
+            "compatible libgdal on the loader path."
         ) from exc
 
 
