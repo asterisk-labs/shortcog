@@ -1,11 +1,8 @@
-"""cffi binding to libshortcog. Internal."""
-
 import ctypes.util
 import os
 from pathlib import Path
 
 from cffi import FFI
-
 
 # Mirrors the subset of shortcog.h this binding uses; update together.
 _CDEF = """
