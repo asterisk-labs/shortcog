@@ -28,14 +28,6 @@ function(shortcog_add_test name)
         CXX_VISIBILITY_PRESET     hidden
         VISIBILITY_INLINES_HIDDEN ON
     )
-    # Windows has no rpath: drop shortcog.dll next to the exe so the loader
-    # finds it. GDAL's dlls come from the conda env on PATH.
-    if(WIN32)
-        add_custom_command(TARGET ${name} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    $<TARGET_RUNTIME_DLLS:${name}> $<TARGET_FILE_DIR:${name}>
-            COMMAND_EXPAND_LISTS)
-    endif()
 endfunction()
 
 shortcog_add_test(test_fixtures  nlohmann_json::nlohmann_json)

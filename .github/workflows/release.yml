@@ -73,16 +73,10 @@ jobs:
             runner: ubuntu-24.04-arm
           - name: macos-arm64
             runner: macos-14
-          - name: windows-x86_64
-            runner: windows-2022
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      # conda-forge's libgdal on Windows is built with MSVC, so the lib must
-      # be built with MSVC too (cl.exe) or the C++ ABI will not match. Unix
-      # uses conda's own compiler; Windows uses the runner's MSVC and lets
-      # micromamba supply only the libraries.
       - uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: build
@@ -93,32 +87,16 @@ jobs:
             cmake
             ninja
             make
-            ${{ runner.os != 'Windows' && 'cxx-compiler' || '' }}
-
-      - if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+            cxx-compiler
 
       - uses: actions/download-artifact@v4
         with:
           name: fixtures
           path: core/tests/fixtures/data/
 
-      - name: Build lib and run C++ tests (Unix)
-        if: runner.os != 'Windows'
+      - name: Build lib and run C++ tests
         shell: bash -el {0}
         run: |
-          make lib
-          KEEP_FIXTURES=1 make test
-
-      # msvc-dev-cmd has put cl.exe and the MSVC INCLUDE/LIB on PATH; force
-      # CMake to pick it over any conda compiler that slipped in.
-      - name: Build lib and run C++ tests (Windows)
-        if: runner.os == 'Windows'
-        shell: bash -el {0}
-        run: |
-          export CC=cl CXX=cl
           make lib
           KEEP_FIXTURES=1 make test
 
@@ -149,9 +127,6 @@ jobs:
           - name: macos-arm64
             runner: macos-14
             plat_tag: macosx_14_0_arm64
-          - name: windows-x86_64
-            runner: windows-2022
-            plat_tag: win_amd64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -194,14 +169,26 @@ jobs:
           name: fixtures
           path: bindings/python/tests/fixtures/
 
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: wheeltest
+          create-args: >-
+            python=3.12
+            gdal=3.12
+
       - name: Install and test
-        shell: bash
+        shell: bash -el {0}
         run: |
           python -m pip install wheelhouse/*.whl
-          python -m pip install "rasterio>=1.5,<2" pytest
+          python -m pip install pytest
           python -c "import shortcog; print('shortcog', shortcog.__version__)"
-          if [ -d bindings/python/tests ]; then
+          # The fixtures download creates tests/ even when no test_*.py exist,
+          # so a bare directory check makes pytest exit 5 ("no tests collected")
+          # and fail the job. Guard on real test files instead.
+          if compgen -G "bindings/python/tests/test_*.py" > /dev/null; then
             python -m pytest bindings/python/tests -q
+          else
+            echo "No Python binding test files present; import smoke test only."
           fi
 
       - uses: actions/upload-artifact@v4
