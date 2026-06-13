@@ -4,7 +4,6 @@ from pathlib import Path
 
 from cffi import FFI
 
-# The C definitions for the API.
 _CDEF = """
 typedef enum {
     SHORTCOG_OK              = 0,
@@ -92,6 +91,33 @@ ffi.cdef(_CDEF)
 _LIB_GLOBS = ("*.so", "*.so.*", "*.dylib", "*.dll")
 
 
+def _ensure_ca_bundle():
+    # Bundled libcurl/openssl come from conda and look for CA certs at a conda
+    # path absent off-conda (Colab, venvs), breaking HTTPS /vsicurl/ reads.
+    if any(os.environ.get(v) for v in (
+        "CURL_CA_BUNDLE", "GDAL_CURL_CA_BUNDLE", "SSL_CERT_FILE",
+        "GDAL_HTTP_UNSAFESSL",
+    )):
+        return
+
+    bundle = None
+    try:
+        import certifi
+        bundle = certifi.where()
+    except Exception:
+        for p in ("/etc/ssl/certs/ca-certificates.crt",
+                  "/etc/pki/tls/certs/ca-bundle.crt",
+                  "/etc/ssl/cert.pem"):
+            if os.path.exists(p):
+                bundle = p
+                break
+
+    if bundle and os.path.exists(bundle):
+        os.environ.setdefault("CURL_CA_BUNDLE", bundle)
+        os.environ.setdefault("GDAL_CURL_CA_BUNDLE", bundle)
+        os.environ.setdefault("SSL_CERT_FILE", bundle)
+
+
 def _bundled_lib():
     lib_dir = Path(__file__).parent / "_lib"
     for pattern in _LIB_GLOBS:
@@ -117,6 +143,7 @@ def _load_lib():
         ) from exc
 
 
+_ensure_ca_bundle()
 lib = _load_lib()
 
 

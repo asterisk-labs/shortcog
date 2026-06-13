@@ -18,6 +18,7 @@ authors = [
 dependencies = [
     "numpy>=1.24",
     "cffi>=1.17",
+    "certifi",
 ]
 
 classifiers = [
