@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [release]   # dry run
+    #branches: [release]   # dry run
     tags: ['v*']          # publish
 
 permissions:
