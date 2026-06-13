@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - release
+    branches: [release]   # dry run
+    tags: ['v*']          # publish
 
 permissions:
   contents: read
@@ -16,7 +16,6 @@ jobs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-
       - id: v
         name: Tag must equal VERSION
         run: |
@@ -32,14 +31,12 @@ jobs:
             echo "version=$VERSION_FILE" >> "$GITHUB_OUTPUT"
           fi
 
-
   gen-fixtures:
     name: Generate fixture corpus
     needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: gen
@@ -48,19 +45,17 @@ jobs:
             gdal=3.12
             numpy
             pydantic
-
       - name: Generate corpus
         shell: bash -el {0}
         run: make fixtures
-
       - uses: actions/upload-artifact@v4
         with:
           name: fixtures
           path: core/tests/fixtures/data/
           if-no-files-found: error
 
-
-  build-lib:
+  # Linux builds run in manylinux_2_28 so the binary is compiled against old glibc.
+  build-lib-linux:
     name: libshortcog (${{ matrix.name }})
     needs: [validate, gen-fixtures]
     strategy:
@@ -69,14 +64,14 @@ jobs:
         include:
           - name: linux-x86_64
             runner: ubuntu-24.04
+            image: quay.io/pypa/manylinux_2_28_x86_64
           - name: linux-aarch64
             runner: ubuntu-24.04-arm
-          - name: macos-arm64
-            runner: macos-14
+            image: quay.io/pypa/manylinux_2_28_aarch64
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: build
@@ -88,115 +83,299 @@ jobs:
             ninja
             make
             cxx-compiler
-
       - uses: actions/download-artifact@v4
         with:
           name: fixtures
           path: core/tests/fixtures/data/
-
       - name: Build lib and run C++ tests
         shell: bash -el {0}
         run: |
           make lib
           KEEP_FIXTURES=1 make test
-
       - name: Stage lib for artifact
         shell: bash -el {0}
         run: make stage-lib STAGE_DIR=staged
-
       - uses: actions/upload-artifact@v4
         with:
           name: libshortcog-${{ matrix.name }}
           path: staged/
           if-no-files-found: error
 
+  build-lib-macos:
+    name: libshortcog (macos-arm64)
+    needs: [validate, gen-fixtures]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: >-
+            python=3.12
+            gdal=3.12
+            zstd
+            cmake
+            ninja
+            make
+            cxx-compiler
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixtures
+          path: core/tests/fixtures/data/
+      - name: Build lib and run C++ tests
+        shell: bash -el {0}
+        run: |
+          make lib
+          KEEP_FIXTURES=1 make test
+      - name: Stage lib for artifact
+        shell: bash -el {0}
+        run: make stage-lib STAGE_DIR=staged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libshortcog-macos-arm64
+          path: staged/
+          if-no-files-found: error
 
-  build-wheel:
+  build-wheel-linux:
     name: Wheel (${{ matrix.name }})
-    needs: [validate, build-lib, gen-fixtures]
+    needs: [validate, build-lib-linux, gen-fixtures]
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: linux-x86_64
             runner: ubuntu-24.04
-            plat_tag: manylinux_2_28_x86_64
+            image: quay.io/pypa/manylinux_2_28_x86_64
           - name: linux-aarch64
             runner: ubuntu-24.04-arm
-            plat_tag: manylinux_2_28_aarch64
-          - name: macos-arm64
-            runner: macos-14
-            plat_tag: macosx_14_0_arm64
+            image: quay.io/pypa/manylinux_2_28_aarch64
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: mamba-org/setup-micromamba@v2
         with:
-          python-version: '3.12'
-
-      - run: python -m pip install --upgrade pip build hatchling cffi wheel
-
+          environment-name: build
+          create-args: >-
+            python=3.12
+            gdal=3.12
+            zstd
       - uses: actions/download-artifact@v4
         with:
           name: libshortcog-${{ matrix.name }}
           path: lib-bin/
-
       - name: Bundle native lib
-        shell: bash
+        shell: bash -el {0}
         run: |
           mkdir -p bindings/python/shortcog/_lib
           cp -a lib-bin/* bindings/python/shortcog/_lib/
-
       - name: Build wheel
+        shell: bash -el {0}
         working-directory: bindings/python
-        run: python -m build --wheel --outdir ../../wheelhouse-raw
-
-      - name: Retag wheel
-        shell: bash
         run: |
-          mkdir -p wheelhouse
-          for whl in wheelhouse-raw/*.whl; do
-            python -m wheel tags \
-              --python-tag py3 --abi-tag none \
-              --platform-tag ${{ matrix.plat_tag }} \
-              --remove "$whl"
-          done
-          mv wheelhouse-raw/*.whl wheelhouse/
-
+          python -m pip install build hatchling cffi wheel
+          python -m build --wheel --outdir ../../wheelhouse-raw
+      - name: Normalise wheel tags
+        shell: bash -el {0}
+        run: python -m wheel tags --python-tag py3 --abi-tag none --remove wheelhouse-raw/*.whl
       - uses: actions/download-artifact@v4
         with:
           name: fixtures
           path: bindings/python/tests/fixtures/
-
-      - uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-name: wheeltest
-          create-args: >-
-            python=3.12
-            gdal=3.12
-
-      - name: Install and test
+      - name: Repair wheel + vendor C++ runtime
         shell: bash -el {0}
         run: |
-          python -m pip install wheelhouse/*.whl
-          python -m pip install pytest
+          set -euo pipefail
+          python -m pip install auditwheel patchelf wheel
+          export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+
+          # Read the floor off auditwheel's "platform tag" line, not the max in the report.
+          floor_of() {
+            auditwheel show "$1" 2>/dev/null | grep -iE 'platform tag' \
+              | grep -oE 'manylinux_[0-9]+_[0-9]+_[a-z0-9_]+' \
+              | sort -t_ -k2,2n -k3,3n | head -1
+          }
+
+          plat=$(floor_of wheelhouse-raw/*.whl)
+          mkdir -p wheelhouse-repaired
+          auditwheel repair ${plat:+--plat "$plat"} -w wheelhouse-repaired wheelhouse-raw/*.whl
+
+          work=$(mktemp -d)
+          python -m wheel unpack -d "$work" "$(ls wheelhouse-repaired/*.whl)"
+          pkg=$(ls -d "$work"/*/)
+          libs=$(ls -d "$pkg"*.libs/ 2>/dev/null | head -1)
+          [ -n "$libs" ] || { echo "::error::no .libs dir"; exit 1; }
+
+          # auditwheel won't vendor libstdc++/libgcc_s, leaving the wheel needing a
+          # gcc-12/13 C++ runtime that Colab lacks. Vendor them under a PRIVATE soname
+          # (a plain-named copy gets shadowed by the system lib at load time) so the
+          # wheel carries its own runtime and only needs glibc 2.17 from the host.
+          declare -A priv=( [libstdc++.so.6]=libstdc++-shortcog.so.6 \
+                            [libgcc_s.so.1]=libgcc_s-shortcog.so.1 )
+          for so in "${!priv[@]}"; do
+            cp -v "$(readlink -f "$CONDA_PREFIX/lib/$so")" "$libs/${priv[$so]}"
+            patchelf --set-soname "${priv[$so]}" "$libs/${priv[$so]}"
+            patchelf --set-rpath '$ORIGIN' "$libs/${priv[$so]}"
+          done
+          mapfile -t elfs < <(find "$pkg" \( -name '*.so' -o -name '*.so.*' \))
+          for f in "${elfs[@]}"; do
+            for so in "${!priv[@]}"; do
+              patchelf --replace-needed "$so" "${priv[$so]}" "$f" 2>/dev/null || true
+            done
+          done
+
+          # glibc is the only system dep left; tag at its real floor from the binaries.
+          g=$(find "$pkg" \( -name '*.so' -o -name '*.so.*' \) -exec objdump -T {} + 2>/dev/null \
+              | grep -oE 'GLIBC_2\.[0-9]+' | sed 's/GLIBC_2\.//' | sort -n | tail -1)
+          tag="manylinux_2_${g:-17}_$(uname -m)"
+          echo "floor -> $tag"
+
+          mkdir -p /tmp/packed
+          python -m wheel pack -d /tmp/packed "$pkg"
+          packed=$(ls /tmp/packed/*.whl)
+          python -m wheel tags --remove --platform-tag "$tag" "$packed"
+          mkdir -p wheelhouse
+          cp /tmp/packed/*.whl wheelhouse/
+          ls -1 wheelhouse/
+      - name: Install and test (GDAL-free)
+        shell: bash -el {0}
+        env:
+          LD_LIBRARY_PATH: ""
+        run: |
+          python -m venv /tmp/clean
+          source /tmp/clean/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install wheelhouse/*.whl pytest
           python -c "import shortcog; print('shortcog', shortcog.__version__)"
-          # The fixtures download creates tests/ even when no test_*.py exist,
-          # so a bare directory check makes pytest exit 5 ("no tests collected")
-          # and fail the job. Guard on real test files instead.
           if compgen -G "bindings/python/tests/test_*.py" > /dev/null; then
             python -m pytest bindings/python/tests -q
           else
-            echo "No Python binding test files present; import smoke test only."
+            echo "no python tests; import smoke test only"
           fi
-
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: wheel-${{ matrix.name }}
           path: wheelhouse/*.whl
           if-no-files-found: error
 
+  build-wheel-macos:
+    name: Wheel (macos-arm64)
+    needs: [validate, build-lib-macos, gen-fixtures]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip build hatchling cffi wheel
+      - uses: actions/download-artifact@v4
+        with:
+          name: libshortcog-macos-arm64
+          path: lib-bin/
+      - name: Bundle native lib
+        shell: bash
+        run: |
+          mkdir -p bindings/python/shortcog/_lib
+          cp -a lib-bin/* bindings/python/shortcog/_lib/
+          # Our lib links Homebrew zstd, GDAL links conda's; repoint ours so delocate
+          # can vendor a single copy, then re-sign (install_name_tool breaks the sig).
+          for f in bindings/python/shortcog/_lib/*.dylib; do
+            [ -L "$f" ] && continue
+            install_name_tool -change /opt/homebrew/opt/zstd/lib/libzstd.1.dylib \
+              @rpath/libzstd.1.5.7.dylib "$f"
+            codesign --force --sign - "$f"
+          done
+      - name: Build wheel
+        working-directory: bindings/python
+        run: python -m build --wheel --outdir ../../wheelhouse-raw
+      - name: Normalise wheel tags
+        shell: bash
+        run: |
+          python -m wheel tags --python-tag py3 --abi-tag none \
+            --platform-tag macosx_14_0_arm64 --remove wheelhouse-raw/*.whl
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixtures
+          path: bindings/python/tests/fixtures/
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: >-
+            python=3.12
+            gdal=3.12
+            zstd
+      - name: Repair wheel (vendor GDAL)
+        shell: bash -el {0}
+        run: |
+          python -m pip install delocate
+          export DYLD_FALLBACK_LIBRARY_PATH="$CONDA_PREFIX/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+          mkdir -p wheelhouse
+          delocate-wheel -w wheelhouse -v wheelhouse-raw/*.whl
+      - name: Install and test (GDAL-free)
+        shell: bash
+        env:
+          LD_LIBRARY_PATH: ""
+          DYLD_LIBRARY_PATH: ""
+          DYLD_FALLBACK_LIBRARY_PATH: ""
+        run: |
+          python -m venv /tmp/clean
+          source /tmp/clean/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install wheelhouse/*.whl pytest
+          python -c "import shortcog; print('shortcog', shortcog.__version__)"
+          if compgen -G "bindings/python/tests/test_*.py" > /dev/null; then
+            python -m pytest bindings/python/tests -q
+          else
+            echo "no python tests; import smoke test only"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-macos-arm64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  check-wheels:
+    name: Check wheel platform tags
+    needs: [build-wheel-linux, build-wheel-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: wheels/
+          merge-multiple: true
+      - name: Assert tags
+        run: |
+          ls -1 wheels/
+          python - <<'PY'
+          import glob, re, sys
+          wheels = [w.split("/")[-1] for w in glob.glob("wheels/*.whl")]
+          ok = True
+
+          def floor(name):
+              m = re.search(r"manylinux_(\d+)_(\d+)_", name)
+              return (int(m.group(1)), int(m.group(2))) if m else None
+
+          targets = {
+              "linux x86_64":  lambda n: "manylinux" in n and n.endswith("x86_64.whl"),
+              "linux aarch64": lambda n: "manylinux" in n and n.endswith("aarch64.whl"),
+              "macos arm64":   lambda n: "macosx" in n and n.endswith("arm64.whl"),
+          }
+          for label, pred in targets.items():
+              if not any(pred(n) for n in wheels):
+                  print(f"::error::missing wheel for {label}")
+                  ok = False
+
+          for n in wheels:
+              f = floor(n)
+              if f and f > (2, 28):
+                  print(f"::error::{n} needs glibc {f[0]}.{f[1]} (> 2.28)")
+                  ok = False
+
+          print("found:", *("  " + n for n in wheels), sep="\n")
+          sys.exit(0 if ok else 1)
+          PY
 
   build-sdist:
     name: sdist
@@ -217,10 +396,9 @@ jobs:
           path: sdist-out/*.tar.gz
           if-no-files-found: error
 
-
   gh-release:
     name: GitHub Release
-    needs: [validate, build-lib, build-wheel, build-sdist]
+    needs: [validate, build-lib-linux, build-lib-macos, build-wheel-linux, build-wheel-macos, build-sdist]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -230,7 +408,6 @@ jobs:
         with:
           pattern: libshortcog-*
           path: artifacts/
-
       - name: Re-pack into versioned archives
         run: |
           set -euo pipefail
@@ -242,7 +419,6 @@ jobs:
             (cd "$plat_dir" && tar czf "$OLDPWD/release-files/${pkg}.tar.gz" .)
           done
           ls -1 release-files/
-
       - uses: softprops/action-gh-release@v2
         with:
           files: release-files/*
@@ -250,10 +426,10 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref, '-') }}
 
-
+  # Trusted publishing (OIDC): needs the `pypi` environment + a PyPI pending publisher.
   publish-pypi:
     name: Publish to PyPI
-    needs: [build-wheel, build-sdist]
+    needs: [build-wheel-linux, build-wheel-macos, build-sdist, check-wheels]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: pypi

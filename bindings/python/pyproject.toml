@@ -18,9 +18,6 @@ authors = [
 dependencies = [
     "numpy>=1.24",
     "cffi>=1.17",
-    # Provides the bundled libgdal our native lib links against. The minor
-    # must match the GDAL we build against, so cap below the next major.
-    "rasterio>=1.5,<2",
 ]
 
 classifiers = [
@@ -44,9 +41,9 @@ test = [
 ]
 
 [project.urls]
-Homepage   = "https://github.com/asterisk-coop/shortcog"
-Repository = "https://github.com/asterisk-coop/shortcog"
-Issues     = "https://github.com/asterisk-coop/shortcog/issues"
+Homepage   = "https://github.com/asterisk-labs/shortcog"
+Repository = "https://github.com/asterisk-labs/shortcog"
+Issues     = "https://github.com/asterisk-labs/shortcog/issues"
 
 
 [tool.hatch.version]
