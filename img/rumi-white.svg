@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="190" viewBox="0 0 680 190" role="img" aria-label="rumi — the format for AI4EO">
+<style>
+.s{stroke:#161616;stroke-width:1;stroke-linejoin:round;animation:pulse 6s step-end infinite;}
+.s1{--on:#4A2BE8;animation-delay:0s}
+.s2{--on:#F7CC0C;animation-delay:1.5s}
+.s3{--on:#A9FFA6;animation-delay:3s}
+.s4{--on:#FE6B37;animation-delay:4.5s}
+@keyframes pulse{0%{fill:var(--on)}25%{fill:#F6F8FA}100%{fill:#F6F8FA}}
+.wm{font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-weight:500;fill:#161616;}
+.tag{font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-weight:400;fill:#57606A;}
+</style>
+<g transform="translate(70,38) scale(1.08)">
+<polygon class="s s1" points="0,0 47,0 43,38 0,32"/>
+<polygon class="s s2" points="47,0 100,0 100,55 70,50 43,38"/>
+<polygon class="s s3" points="70,50 100,55 100,100 58,100 50,72"/>
+<polygon class="s s4" points="0,32 43,38 70,50 50,72 58,100 0,100"/>
+</g>
+<text class="wm" x="208" y="118" font-size="78" letter-spacing="-2">rumi</text>
+<text class="tag" x="212" y="150" font-size="18">the format for AI4EO</text>
+</svg>

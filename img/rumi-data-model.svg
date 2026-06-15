@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="520" viewBox="0 0 680 520" role="img" aria-label="rumi data model">
+<style>
+svg{--ink:#1A1A1A;--mut:#3D3D3D;--hint:#5E5E5E;--rule:rgba(0,0,0,.18);}
+text{font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;}
+.t{font-size:14px;font-weight:500;fill:var(--ink);}
+.s{font-size:12px;font-weight:400;fill:var(--mut);}
+.ax{font-size:11px;font-weight:500;fill:var(--mut);}
+.el{font-size:18px;font-weight:500;fill:var(--mut);}
+.rule{stroke:var(--rule);stroke-width:.6;}
+</style>
+<title>rumi data model</title><desc>Six levels of the rumi data model as an isometric visual grammar.</desc>
+<line class="rule" x1="236" y1="44" x2="236" y2="496"/>
+<line class="rule" x1="452" y1="44" x2="452" y2="496"/>
+<line class="rule" x1="24" y1="290" x2="656" y2="290"/>
+<text class="t" x="36" y="66">tile</text>
+<text class="s" x="36" y="84">T × T</text>
+<text class="s" x="36" y="100" opacity=".85">one OpenZL frame</text>
+<text class="t" x="252" y="66">cell</text>
+<text class="s" x="252" y="84">B × T × T</text>
+<text class="s" x="252" y="100" opacity=".85">contiguous on disk</text>
+<text class="t" x="468" y="66">Image</text>
+<text class="s" x="468" y="84">(B, Y, X)</text>
+<text class="s" x="468" y="100" opacity=".85">one rumi file</text>
+<text class="t" x="36" y="312">Cube</text>
+<text class="s" x="36" y="330">(N, B, Y, X)</text>
+<text class="t" x="252" y="312">ImageCollection</text>
+<text class="s" x="252" y="330">set of Images</text>
+<text class="t" x="468" y="312">CubeCollection</text>
+<text class="s" x="468" y="330">set of Cubes</text>
+<rect x="103" y="150" width="50" height="50" fill="#F2C879" stroke="#9C6B16" stroke-width="1"/>
+<line x1="103" y1="210" x2="153" y2="210" stroke="var(--hint)" stroke-width=".7"/>
+<text class="ax" x="128" y="224" text-anchor="middle">T</text>
+<line x1="93" y1="150" x2="93" y2="200" stroke="var(--hint)" stroke-width=".7"/>
+<text class="ax" x="84" y="178" text-anchor="middle">T</text>
+<polygon points="320,182 354,182 410,147 376,147" fill="#FAE2AC" stroke="#9C6B16" stroke-width=".9" stroke-linejoin="round"/>
+<polygon points="354,182 354,216 410,181 410,147" fill="#E0A33E" stroke="#9C6B16" stroke-width=".9" stroke-linejoin="round"/>
+<rect x="320" y="182" width="34" height="34" fill="#F2C879" stroke="#9C6B16" stroke-width=".9"/>
+<line x1="334.0" y1="173.2" x2="368.0" y2="173.2" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="368.0" y1="173.2" x2="368.0" y2="207.2" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="348.0" y1="164.5" x2="382.0" y2="164.5" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="382.0" y1="164.5" x2="382.0" y2="198.5" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="362.0" y1="155.8" x2="396.0" y2="155.8" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="396.0" y1="155.8" x2="396.0" y2="189.8" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<text class="ax" x="392" y="150" text-anchor="middle">B</text>
+<polygon points="508,150 600,150 640,125 548,125" fill="#FAE2AC" stroke="#9C6B16" stroke-width=".9" stroke-linejoin="round"/>
+<polygon points="600,150 600,220 640,195 640,125" fill="#E0A33E" stroke="#9C6B16" stroke-width=".9" stroke-linejoin="round"/>
+<rect x="508" y="150" width="92" height="70" fill="#F2C879" stroke="#9C6B16" stroke-width=".9"/>
+<line x1="538.7" y1="150" x2="538.7" y2="220" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="569.3" y1="150" x2="569.3" y2="220" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="508" y1="173.3" x2="600" y2="173.3" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="508" y1="196.7" x2="600" y2="196.7" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<text class="ax" x="498" y="190" text-anchor="middle">Y</text>
+<text class="ax" x="554" y="236" text-anchor="middle">X</text>
+<text class="ax" x="630" y="132" text-anchor="middle">B</text>
+<polygon points="82,388 152,388 170,376 100,376" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<polygon points="152,388 152,442 170,430 170,376" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<rect x="82" y="388" width="70" height="54" fill="rgba(23,156,115,0.10)" stroke="#179C73" stroke-width="1"/>
+<polygon points="98,400 128,400 138.8,392.8 108.8,392.8" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<polygon points="128,400 128,424 138.8,416.8 138.8,392.8" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<rect x="98" y="400" width="30" height="24" fill="rgba(23,156,115,0.10)" stroke="#179C73" stroke-width="1"/>
+<line x1="82" y1="388" x2="98" y2="400" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="152" y1="388" x2="128" y2="400" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="152" y1="442" x2="128" y2="424" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="82" y1="442" x2="98" y2="424" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<text class="ax" x="174" y="376" text-anchor="middle">B</text>
+<text class="ax" x="128" y="437" text-anchor="middle">N</text>
+<rect x="250" y="360" width="190" height="116" rx="9" fill="none" stroke="var(--hint)" stroke-width="1.1" stroke-dasharray="5 4"/>
+<polygon points="266,402 320,402 344,387 290,387" fill="#FAE2AC" stroke="#9C6B16" stroke-width=".9" stroke-linejoin="round"/>
+<polygon points="320,402 320,444 344,429 344,387" fill="#E0A33E" stroke="#9C6B16" stroke-width=".9" stroke-linejoin="round"/>
+<rect x="266" y="402" width="54" height="42" fill="#F2C879" stroke="#9C6B16" stroke-width=".9"/>
+<line x1="293.0" y1="402" x2="293.0" y2="444" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="266" y1="423.0" x2="320" y2="423.0" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<text class="ax" x="293" y="396" text-anchor="middle">[0]</text>
+<text class="el" x="364" y="430" text-anchor="middle">…</text>
+<polygon points="390,420 420,420 434,411 404,411" fill="#FAE2AC" stroke="#9C6B16" stroke-width=".9" stroke-linejoin="round"/>
+<polygon points="420,420 420,442 434,433 434,411" fill="#E0A33E" stroke="#9C6B16" stroke-width=".9" stroke-linejoin="round"/>
+<rect x="390" y="420" width="30" height="22" fill="#F2C879" stroke="#9C6B16" stroke-width=".9"/>
+<line x1="405.0" y1="420" x2="405.0" y2="442" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<line x1="390" y1="431.0" x2="420" y2="431.0" stroke="#9C6B16" stroke-width=".5" opacity=".55"/>
+<text class="ax" x="405" y="408" text-anchor="middle">[N-1]</text>
+<rect x="466" y="360" width="188" height="116" rx="9" fill="none" stroke="var(--hint)" stroke-width="1.1" stroke-dasharray="5 4"/>
+<polygon points="480,404 528,404 541,395 493,395" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<polygon points="528,404 528,442 541,433 541,395" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<rect x="480" y="404" width="48" height="38" fill="rgba(23,156,115,0.10)" stroke="#179C73" stroke-width="1"/>
+<polygon points="489,412 511,412 518.8,406.6 496.8,406.6" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<polygon points="511,412 511,430 518.8,424.6 518.8,406.6" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<rect x="489" y="412" width="22" height="18" fill="rgba(23,156,115,0.10)" stroke="#179C73" stroke-width="1"/>
+<line x1="480" y1="404" x2="489" y2="412" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="528" y1="404" x2="511" y2="412" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="528" y1="442" x2="511" y2="430" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="480" y1="442" x2="489" y2="430" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<text class="ax" x="506" y="398" text-anchor="middle">[0]</text>
+<text class="el" x="566" y="430" text-anchor="middle">…</text>
+<polygon points="590,418 618,418 627,412 599,412" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<polygon points="618,418 618,438 627,432 627,412" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<rect x="590" y="418" width="28" height="20" fill="rgba(23,156,115,0.10)" stroke="#179C73" stroke-width="1"/>
+<polygon points="596,422 608,422 613.4,418.4 601.4,418.4" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<polygon points="608,422 608,431 613.4,427.4 613.4,418.4" fill="none" stroke="#179C73" stroke-width="1" stroke-linejoin="round"/>
+<rect x="596" y="422" width="12" height="9" fill="rgba(23,156,115,0.10)" stroke="#179C73" stroke-width="1"/>
+<line x1="590" y1="418" x2="596" y2="422" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="618" y1="418" x2="608" y2="422" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="618" y1="438" x2="608" y2="431" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<line x1="590" y1="438" x2="596" y2="431" stroke="#179C73" stroke-width=".9" stroke-dasharray="3 3"/>
+<text class="ax" x="606" y="408" text-anchor="middle">[N-1]</text>
+</svg>
